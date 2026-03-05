@@ -11,6 +11,7 @@ A community platform where users can browse, post, and RSVP to local events.
 - Paginated and filtered API endpoints.
 - Test coverage with `JUnit` and `@SpringBootTest`
 - `SpringDoc` for API documentation and `Swagger UI`.
+- `Shadcn/ui` for frontend UI.
 
 ## Basic Workflow
 1. User registers/logs in
