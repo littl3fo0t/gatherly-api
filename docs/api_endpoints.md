@@ -163,6 +163,7 @@ Returns a paginated list of all active events, sorted by start time. Hot events 
       "title": "Spring Meetup 2026",
       "eventType": "in_person",
       "admissionType": "free",
+      "admissionFee": null,
       "startTime": "2026-04-01T18:00:00Z",
       "endTime": "2026-04-01T21:00:00Z",
       "timezone": "America/Toronto",
@@ -208,6 +209,7 @@ Returns full details for a single active event. Organizer name is only included 
   "description": "<p>Rich text content here...</p>",
   "eventType": "in_person",
   "admissionType": "free",
+  "admissionFee": null,
   "startTime": "2026-04-01T18:00:00Z",
   "endTime": "2026-04-01T21:00:00Z",
   "timezone": "America/Toronto",
@@ -287,6 +289,7 @@ Creates a new event. The authenticated user becomes the organizer.
   "province": "ON",
   "postalCode": "M5V 1A1",
   "meetingLink": null,
+  "admissionFee": null,
   "coverImageUrl": "https://res.cloudinary.com/...",
   "maxCapacity": 50,
   "categoryIds": ["uuid", "uuid"]
@@ -298,13 +301,13 @@ Creates a new event. The authenticated user becomes the organizer.
 | Status | Description |
 |---|---|
 | `201 Created` | Event created successfully. Returns the created event. |
-| `400 Bad Request` | Validation failed (e.g. missing required fields, end time before start time, more than 3 categories, missing meeting link for virtual event). |
+| `400 Bad Request` | Validation failed (e.g. missing required fields, end time before start time, more than 3 categories, missing meeting link for virtual event, `admissionFee` provided for a free event, `admissionFee` missing or zero for a paid event). |
 | `401 Unauthorized` | Missing or invalid token. |
 
 ---
 
 #### `PUT /events/{id}`
-Updates an existing event. Only the organizer can edit their own event. `eventType` and `admissionType` are immutable and will be ignored if included.
+Updates an existing event. Only the organizer can edit their own event. `eventType`, `admissionType` and `admissionFee` are immutable and will be ignored if included.
 
 **Path parameters:**
 
@@ -312,7 +315,7 @@ Updates an existing event. Only the organizer can edit their own event. `eventTy
 |---|---|---|
 | `id` | `UUID` | The event ID. |
 
-**Request body:** Same shape as `POST /events` excluding `eventType` and `admissionType`.
+**Request body:** Same shape as `POST /events` excluding `eventType`, `admissionType` and `admissionFee`.
 
 **Responses:**
 
