@@ -1,19 +1,27 @@
-# Gatherly - A Local Event Board
-A community platform where users can browse, post, and RSVP to local events.
+# Gatherly — A Local Event Board
+A full stack community event platform where users can discover local events, create and manage their own, and RSVP for ones they want to attend.
 
+## Technologies
 
-## Key Features
-- ~~Browse and search events pulled from a headless CMS (`Sanity`).~~
-- User authentication via `Supabase Auth` with protected RSVP endpoints.
-- Image/file uploads via `Cloudinary`.
-- RSVP system with `Spring Boot API` and `PostgreSQL`.
-- Soft delete for events with a periodically run `CRON` job to purge old records.
-- Paginated and filtered API endpoints.
-- Test coverage with `JUnit` and `@SpringBootTest`
-- `SpringDoc` for API documentation and `Swagger UI`.
-- `Shadcn/ui` for frontend UI.
+### Backend:
+ - Java & Spring Boot
+ - PostgreSQL
+ - Supabase Auth (JWT-based authentication)
+ - Cloudinary (image uploads)
+ - SpringDoc & Swagger UI (API documentation)
+ - JUnit 5 & Mockito (testing)
 
-## Basic Workflow
+### Frontend:
+ - Next.js
+ - Tailwind CSS
+ - shadcn/ui
+ - TipTap (rich text editing)
+
+### Deployment:
+ - Render (API & database)
+ - Vercel (frontend)
+
+## Basic Workflow (WIP)
 1. User registers/logs in
    - Supabase Auth issues JWT
    - User record saved in PostgreSQL
