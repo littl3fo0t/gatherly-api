@@ -125,6 +125,7 @@ Core table storing all event metadata. Content such as rich text descriptions is
 | `cover_image_url` | `TEXT` | ✅ | Cloudinary URL for the event's cover image. Optional. |
 | `event_type` | `ENUM('virtual', 'in_person', 'hybrid')` | ❌ | **Immutable after creation.** Determines which location fields are required. |
 | `admission_type` | `ENUM('free', 'paid')` | ❌ | **Immutable after creation.** Protects users who RSVP based on admission terms. |
+| `admission_fee` | `NUMERIC(10, 2)` | ✅ | **Immutable after creation.** Ticket price in CAD. Required and must be `> 0.00` if `admission_type = 'paid'`. Must be `NULL` if `admission_type = 'free'`. |
 | `meeting_link` | `TEXT` | ✅ | Required if `event_type` is `virtual` or `hybrid`. Validated as a valid URL. |
 | `address_line1` | `VARCHAR(255)` | ✅ | Required if `event_type` is `in_person` or `hybrid`. |
 | `address_line2` | `VARCHAR(255)` | ✅ | Apartment, suite, unit. Optional. |
@@ -144,6 +145,15 @@ Core table storing all event metadata. Content such as rich text descriptions is
 | `created_at` | `TIMESTAMPTZ` | ❌ | Timestamp of event creation. Defaults to `NOW()`. |
 | `updated_at` | `TIMESTAMPTZ` | ❌ | Timestamp of last update. Updated via trigger. |
 
+**Constraints:**
+```sql
+CONSTRAINT admission_fee_check CHECK (
+  (admission_type = 'paid' AND admission_fee IS NOT NULL AND admission_fee > 0)
+  OR
+  (admission_type = 'free' AND admission_fee IS NULL)
+)
+```
+
 **Indexes:**
 - Index on `status` for filtering active events on the main listing
 - Index on `start_time` for sorting and CRON job queries
@@ -161,6 +171,8 @@ Core table storing all event metadata. Content such as rich text descriptions is
 - If `event_type = 'virtual'` → `meeting_link` required
 - If `event_type = 'in_person'` → `address_line1`, `city`, `province`, `postal_code` required
 - If `event_type = 'hybrid'` → both `meeting_link` and address fields required
+- If `admission_type = 'paid'` → `admission_fee` required and must be `> 0.00`
+- If `admission_type = 'free'` → `admission_fee` must be `null`
 
 ---
 
@@ -313,6 +325,9 @@ END IF;
 IF NEW.admission_type <> OLD.admission_type THEN
   RAISE EXCEPTION 'admission_type cannot be changed after event creation';
 END IF;
+IF NEW.admission_fee <> OLD.admission_fee THEN
+  RAISE EXCEPTION 'admission_fee cannot be changed after event creation';
+END IF;
 ```
 
 ---
@@ -341,7 +356,7 @@ WHERE id = NEW.event_id;
 ## Business Rules & Edge Cases
 
 ### Immutable Fields
-- `event_type` and `admission_type` cannot be changed after creation — enforced by trigger and API validation
+- `event_type`, `admission_type`, and `admission_fee` cannot be changed after creation — enforced by trigger and API validation
 - `max_capacity` can only be increased, never decreased — enforced by trigger
 
 ### Conditional Location Validation
