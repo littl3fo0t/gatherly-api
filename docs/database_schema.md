@@ -406,23 +406,34 @@ WHERE id = NEW.event_id;
 ## RLS Policies
 
 > **Note:** Since all database access is mediated through the Spring Boot API, Row Level Security serves as a secondary defence-in-depth layer rather than the primary access control mechanism. Primary enforcement is handled by Spring Security and service layer logic.
+>
+> Roles are stored on the `profiles` table and also exposed in the Supabase Auth JWT as a custom `role` claim. RLS policies use both `auth.uid()` (the current user ID) and `auth.jwt() ->> 'role'` (the caller's role) to make decisions.
 
 ### `profiles`
 | Policy | Applies To | Rule |
 |---|---|---|
 | Users can read their own profile | `SELECT` | `auth.uid() = id` |
 | Users can update their own profile | `UPDATE` | `auth.uid() = id` |
-| Admin can read all profiles | `SELECT` | `role = 'admin'` |
-| Admin can update any profile | `UPDATE` | `role = 'admin'` |
+| Admin can read all profiles | `SELECT` | `auth.jwt() ->> 'role' = 'admin'` |
+| Admin can update any profile | `UPDATE` | `auth.jwt() ->> 'role' = 'admin'` |
 
 ### `events`
 | Policy | Applies To | Rule |
 |---|---|---|
 | Anyone can read active events | `SELECT` | `status = 'active'` |
 | Organizer can read their own events regardless of status | `SELECT` | `auth.uid() = organizer_id` |
+| Admin can read all events | `SELECT` | `auth.jwt() ->> 'role' = 'admin'` |
+| Any authenticated user can create events for themselves | `INSERT` | `organizer_id = auth.uid()` |
 | Organizer can update their own events | `UPDATE` | `auth.uid() = organizer_id` |
-| Organizer can soft delete their own events | `UPDATE` | `auth.uid() = organizer_id` |
-| Moderator/admin can flag any event | `UPDATE` | `role IN ('moderator', 'admin')` |
+| Organizer can soft delete (delete) their own events | `DELETE` | `auth.uid() = organizer_id` |
+| Moderator/admin can flag any event | `UPDATE` | `auth.jwt() ->> 'role' IN ('moderator', 'admin')` and `status = 'flagged'`, `flag_reason IS NOT NULL`, `flagged_by = auth.uid()` |
+
+### `event_categories`
+| Policy | Applies To | Rule |
+|---|---|---|
+| Anyone can read event-category assignments | `SELECT` | `true` |
+| Organizer can manage categories for their own events | `INSERT/UPDATE/DELETE` | Exists matching row in `events` where `events.id = event_categories.event_id` and `events.organizer_id = auth.uid()` |
+| Moderator/admin can manage categories for any event | `INSERT/UPDATE/DELETE` | Exists matching row in `events` where `events.id = event_categories.event_id` and `auth.jwt() ->> 'role' IN ('admin', 'moderator')` |
 
 ### `rsvps`
 | Policy | Applies To | Rule |
@@ -434,14 +445,14 @@ WHERE id = NEW.event_id;
 ### `event_log`
 | Policy | Applies To | Rule |
 |---|---|---|
-| Admin can read all log entries | `SELECT` | `role = 'admin'` |
+| Admin can read all log entries | `SELECT` | `auth.jwt() ->> 'role' = 'admin'` |
 | No inserts, updates or deletes permitted via client | `ALL` | Deny all direct client access — writes via API only |
 
 ### `categories`
 | Policy | Applies To | Rule |
 |---|---|---|
 | Anyone can read categories | `SELECT` | `true` |
-| Only admin can insert, update or delete | `ALL` | `role = 'admin'` |
+| Only admin can insert, update or delete | `INSERT/UPDATE/DELETE` | `auth.jwt() ->> 'role' = 'admin'` |
 
 ---
 
