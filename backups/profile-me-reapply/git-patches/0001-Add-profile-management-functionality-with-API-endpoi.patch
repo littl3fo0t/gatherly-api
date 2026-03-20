@@ -1,0 +1,754 @@
+From 16579bd7d8dce437a2954811601985f125a049db Mon Sep 17 00:00:00 2001
+From: littl3fo0t <thomas.brun.1703@hotmail.com>
+Date: Fri, 20 Mar 2026 20:34:58 -0300
+Subject: [PATCH] Add profile management functionality with API endpoints and
+ data transfer objects
+
+Implemented ProfileController for managing user profiles, including endpoints for retrieving and updating the authenticated user's profile. Introduced Profile, ProfileResponse, and UpdateMyProfileRequest DTOs for data handling. Added ProfileService for business logic and ProfileRepository for data access. Integrated OpenAPI configuration for API documentation and security with JWT authentication.
+---
+ .../gatherly_api/config/OpenApiConfig.java    |  28 +++
+ .../controller/ProfileController.java         | 105 ++++++++++
+ .../gatherly_api/dto/ProfileResponse.java     |  41 ++++
+ .../dto/UpdateMyProfileRequest.java           |  43 ++++
+ .../gatherly/gatherly_api/model/Profile.java  |  95 +++++++++
+ .../repository/ProfileRepository.java         |  12 ++
+ .../gatherly_api/service/ProfileService.java  |  49 +++++
+ .../controller/ProfileControllerTest.java     | 189 ++++++++++++++++++
+ .../service/ProfileServiceTest.java           | 107 ++++++++++
+ 9 files changed, 669 insertions(+)
+ create mode 100644 src/main/java/com/gatherly/gatherly_api/config/OpenApiConfig.java
+ create mode 100644 src/main/java/com/gatherly/gatherly_api/controller/ProfileController.java
+ create mode 100644 src/main/java/com/gatherly/gatherly_api/dto/ProfileResponse.java
+ create mode 100644 src/main/java/com/gatherly/gatherly_api/dto/UpdateMyProfileRequest.java
+ create mode 100644 src/main/java/com/gatherly/gatherly_api/model/Profile.java
+ create mode 100644 src/main/java/com/gatherly/gatherly_api/repository/ProfileRepository.java
+ create mode 100644 src/main/java/com/gatherly/gatherly_api/service/ProfileService.java
+ create mode 100644 src/test/java/com/gatherly/gatherly_api/controller/ProfileControllerTest.java
+ create mode 100644 src/test/java/com/gatherly/gatherly_api/service/ProfileServiceTest.java
+
+diff --git a/src/main/java/com/gatherly/gatherly_api/config/OpenApiConfig.java b/src/main/java/com/gatherly/gatherly_api/config/OpenApiConfig.java
+new file mode 100644
+index 0000000..7956053
+--- /dev/null
++++ b/src/main/java/com/gatherly/gatherly_api/config/OpenApiConfig.java
+@@ -0,0 +1,28 @@
++package com.gatherly.gatherly_api.config;
++
++import io.swagger.v3.oas.annotations.OpenAPIDefinition;
++import io.swagger.v3.oas.annotations.enums.SecuritySchemeIn;
++import io.swagger.v3.oas.annotations.enums.SecuritySchemeType;
++import io.swagger.v3.oas.annotations.info.Info;
++import io.swagger.v3.oas.annotations.security.SecurityScheme;
++import org.springframework.context.annotation.Configuration;
++
++/**
++ * OpenAPI metadata + JWT bearer scheme for Swagger UI "Authorize".
++ */
++@Configuration
++@OpenAPIDefinition(
++        info = @Info(
++                title = "Gatherly API",
++                version = "v1"
++        )
++)
++@SecurityScheme(
++        name = "bearerAuth",
++        type = SecuritySchemeType.HTTP,
++        scheme = "bearer",
++        bearerFormat = "JWT",
++        in = SecuritySchemeIn.HEADER
++)
++public class OpenApiConfig {
++}
+diff --git a/src/main/java/com/gatherly/gatherly_api/controller/ProfileController.java b/src/main/java/com/gatherly/gatherly_api/controller/ProfileController.java
+new file mode 100644
+index 0000000..9ca88f8
+--- /dev/null
++++ b/src/main/java/com/gatherly/gatherly_api/controller/ProfileController.java
+@@ -0,0 +1,105 @@
++package com.gatherly.gatherly_api.controller;
++
++import com.gatherly.gatherly_api.dto.ProfileResponse;
++import com.gatherly.gatherly_api.dto.UpdateMyProfileRequest;
++import com.gatherly.gatherly_api.model.Profile;
++import com.gatherly.gatherly_api.service.ProfileService;
++import io.swagger.v3.oas.annotations.Operation;
++import io.swagger.v3.oas.annotations.media.Content;
++import io.swagger.v3.oas.annotations.media.Schema;
++import io.swagger.v3.oas.annotations.responses.ApiResponse;
++import io.swagger.v3.oas.annotations.security.SecurityRequirement;
++import io.swagger.v3.oas.annotations.tags.Tag;
++import jakarta.validation.Valid;
++import org.springframework.http.HttpStatus;
++import org.springframework.http.ResponseEntity;
++import org.springframework.security.oauth2.jwt.Jwt;
++import org.springframework.security.core.annotation.AuthenticationPrincipal;
++import org.springframework.web.bind.annotation.GetMapping;
++import org.springframework.web.bind.annotation.PutMapping;
++import org.springframework.web.bind.annotation.RequestBody;
++import org.springframework.web.bind.annotation.RequestMapping;
++import org.springframework.web.bind.annotation.RestController;
++import org.springframework.web.server.ResponseStatusException;
++
++import java.util.UUID;
++
++@RestController
++@RequestMapping("/api/profiles")
++@Tag(name = "Profiles", description = "Authenticated profile endpoints")
++@SecurityRequirement(name = "bearerAuth")
++public class ProfileController {
++
++    private final ProfileService profileService;
++
++    public ProfileController(ProfileService profileService) {
++        this.profileService = profileService;
++    }
++
++    @GetMapping("/me")
++    @Operation(
++            summary = "Get current user's profile",
++            description = "Returns the profile for the authenticated user.",
++            responses = {
++                    @ApiResponse(
++                            responseCode = "200",
++                            description = "Profile returned successfully.",
++                            content = @Content(
++                                    mediaType = "application/json",
++                                    schema = @Schema(implementation = ProfileResponse.class)
++                            )
++                    ),
++                    @ApiResponse(responseCode = "401", description = "Missing or invalid token."),
++                    @ApiResponse(responseCode = "404", description = "Authenticated profile not found.")
++            }
++    )
++    public ResponseEntity<ProfileResponse> getMyProfile(@AuthenticationPrincipal Jwt jwt) {
++        UUID userId = readUserIdFromJwt(jwt);
++        Profile profile = profileService.getMyProfile(userId);
++        return ResponseEntity.ok(ProfileResponse.from(profile));
++    }
++
++    @PutMapping("/me")
++    @Operation(
++            summary = "Update current user's profile",
++            description = "Updates editable fields for the authenticated user profile.",
++            responses = {
++                    @ApiResponse(
++                            responseCode = "200",
++                            description = "Profile updated successfully.",
++                            content = @Content(
++                                    mediaType = "application/json",
++                                    schema = @Schema(implementation = ProfileResponse.class)
++                            )
++                    ),
++                    @ApiResponse(responseCode = "400", description = "Validation failed."),
++                    @ApiResponse(responseCode = "401", description = "Missing or invalid token."),
++                    @ApiResponse(responseCode = "404", description = "Authenticated profile not found.")
++            }
++    )
++    public ResponseEntity<ProfileResponse> updateMyProfile(
++            @AuthenticationPrincipal Jwt jwt,
++            @Valid @RequestBody UpdateMyProfileRequest request
++    ) {
++        UUID userId = readUserIdFromJwt(jwt);
++        Profile updated = profileService.updateMyProfile(userId, request);
++        return ResponseEntity.ok(ProfileResponse.from(updated));
++    }
++
++    /**
++     * Converts JWT subject -> UUID.
++     * <p>
++     * We always use token identity for /me endpoints so clients cannot
++     * impersonate other users by passing arbitrary IDs in request data.
++     */
++    private UUID readUserIdFromJwt(Jwt jwt) {
++        if (jwt == null || jwt.getSubject() == null || jwt.getSubject().isBlank()) {
++            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing authenticated user.");
++        }
++        try {
++            return UUID.fromString(jwt.getSubject());
++        } catch (IllegalArgumentException exception) {
++            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid user subject in token.");
++        }
++    }
++}
+diff --git a/src/main/java/com/gatherly/gatherly_api/dto/ProfileResponse.java b/src/main/java/com/gatherly/gatherly_api/dto/ProfileResponse.java
+new file mode 100644
+index 0000000..f3ca2ba
+--- /dev/null
++++ b/src/main/java/com/gatherly/gatherly_api/dto/ProfileResponse.java
+@@ -0,0 +1,41 @@
++package com.gatherly.gatherly_api.dto;
++
++import com.gatherly.gatherly_api.model.Profile;
++
++import java.time.OffsetDateTime;
++import java.util.UUID;
++
++/**
++ * API response model for profile endpoints.
++ */
++public record ProfileResponse(
++        UUID id,
++        String fullName,
++        String email,
++        String role,
++        String avatarUrl,
++        String addressLine1,
++        String addressLine2,
++        String city,
++        String province,
++        String postalCode,
++        OffsetDateTime createdAt,
++        OffsetDateTime updatedAt
++) {
++    public static ProfileResponse from(Profile profile) {
++        return new ProfileResponse(
++                profile.getId(),
++                profile.getFullName(),
++                profile.getEmail(),
++                profile.getRole() == null ? null : profile.getRole().name(),
++                profile.getAvatarUrl(),
++                profile.getAddressLine1(),
++                profile.getAddressLine2(),
++                profile.getCity(),
++                profile.getProvince() == null ? null : profile.getProvince().name(),
++                profile.getPostalCode(),
++                profile.getCreatedAt(),
++                profile.getUpdatedAt()
++        );
++    }
++}
+diff --git a/src/main/java/com/gatherly/gatherly_api/dto/UpdateMyProfileRequest.java b/src/main/java/com/gatherly/gatherly_api/dto/UpdateMyProfileRequest.java
+new file mode 100644
+index 0000000..b1f0593
+--- /dev/null
++++ b/src/main/java/com/gatherly/gatherly_api/dto/UpdateMyProfileRequest.java
+@@ -0,0 +1,43 @@
++package com.gatherly.gatherly_api.dto;
++
++import jakarta.validation.constraints.NotBlank;
++import jakarta.validation.constraints.Pattern;
++import jakarta.validation.constraints.Size;
++
++/**
++ * Request payload for updating the authenticated user's profile.
++ */
++public record UpdateMyProfileRequest(
++        @NotBlank(message = "fullName is required.")
++        @Size(max = 100, message = "fullName must be at most 100 characters.")
++        String fullName,
++
++        @Pattern(
++                regexp = "^(https?://.*)?$",
++                message = "avatarUrl must be a valid http/https URL."
++        )
++        @Size(max = 2000, message = "avatarUrl must be at most 2000 characters.")
++        String avatarUrl,
++
++        @Size(max = 255, message = "addressLine1 must be at most 255 characters.")
++        String addressLine1,
++
++        @Size(max = 255, message = "addressLine2 must be at most 255 characters.")
++        String addressLine2,
++
++        @Size(max = 100, message = "city must be at most 100 characters.")
++        String city,
++
++        @Pattern(
++                regexp = "^(AB|BC|MB|NB|NL|NS|NT|NU|ON|PE|QC|SK|YT)?$",
++                message = "province must be a valid Canadian province/territory code."
++        )
++        String province,
++
++        @Pattern(
++                regexp = "^([A-Za-z]\\d[A-Za-z][ -]?\\d[A-Za-z]\\d)?$",
++                message = "postalCode must be a valid Canadian postal code."
++        )
++        String postalCode
++) {
++}
+diff --git a/src/main/java/com/gatherly/gatherly_api/model/Profile.java b/src/main/java/com/gatherly/gatherly_api/model/Profile.java
+new file mode 100644
+index 0000000..4c609c4
+--- /dev/null
++++ b/src/main/java/com/gatherly/gatherly_api/model/Profile.java
+@@ -0,0 +1,95 @@
++package com.gatherly.gatherly_api.model;
++
++import jakarta.persistence.Column;
++import jakarta.persistence.Entity;
++import jakarta.persistence.EnumType;
++import jakarta.persistence.Enumerated;
++import jakarta.persistence.Id;
++import jakarta.persistence.Table;
++import org.hibernate.annotations.JdbcTypeCode;
++import org.hibernate.type.SqlTypes;
++import lombok.AllArgsConstructor;
++import lombok.Builder;
++import lombok.Getter;
++import lombok.NoArgsConstructor;
++
++import java.time.OffsetDateTime;
++import java.util.UUID;
++
++/**
++ * Represents a row in the {@code profiles} table.
++ * <p>
++ * This entity stores app-owned user profile data that lives alongside
++ * Supabase-authenticated identities.
++ */
++@Entity
++@Table(name = "profiles")
++@Getter
++@NoArgsConstructor
++@AllArgsConstructor
++@Builder
++public class Profile {
++
++    @Id
++    @Column(name = "id", nullable = false, updatable = false)
++    private UUID id;
++
++    @Column(name = "full_name", nullable = false, length = 100)
++    private String fullName;
++
++    @Column(name = "email", nullable = false, length = 255, unique = true)
++    private String email;
++
++    @Enumerated(EnumType.STRING)
++    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
++    @Column(name = "role", nullable = false, columnDefinition = "role_enum")
++    private Role role;
++
++    @Column(name = "avatar_url")
++    private String avatarUrl;
++
++    @Column(name = "address_line1", length = 255)
++    private String addressLine1;
++
++    @Column(name = "address_line2", length = 255)
++    private String addressLine2;
++
++    @Column(name = "city", length = 100)
++    private String city;
++
++    @Enumerated(EnumType.STRING)
++    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
++    @Column(name = "province", columnDefinition = "province_enum")
++    private Province province;
++
++    @Column(name = "postal_code", length = 7)
++    private String postalCode;
++
++    @Column(name = "created_at", nullable = false, updatable = false, insertable = false)
++    private OffsetDateTime createdAt;
++
++    @Column(name = "updated_at", nullable = false, insertable = false, updatable = false)
++    private OffsetDateTime updatedAt;
++
++    /**
++     * Applies only the fields that users are allowed to edit through /profiles/me.
++     * Email and role are intentionally excluded to enforce endpoint rules.
++     */
++    public void applySelfServiceUpdate(
++            String fullName,
++            String avatarUrl,
++            String addressLine1,
++            String addressLine2,
++            String city,
++            String province,
++            String postalCode
++    ) {
++        this.fullName = fullName;
++        this.avatarUrl = avatarUrl;
++        this.addressLine1 = addressLine1;
++        this.addressLine2 = addressLine2;
++        this.city = city;
++        this.province = (province == null || province.isBlank()) ? null : Province.valueOf(province);
++        this.postalCode = postalCode;
++    }
++}
+diff --git a/src/main/java/com/gatherly/gatherly_api/repository/ProfileRepository.java b/src/main/java/com/gatherly/gatherly_api/repository/ProfileRepository.java
+new file mode 100644
+index 0000000..85a7de3
+--- /dev/null
++++ b/src/main/java/com/gatherly/gatherly_api/repository/ProfileRepository.java
+@@ -0,0 +1,12 @@
++package com.gatherly.gatherly_api.repository;
++
++import com.gatherly.gatherly_api.model.Profile;
++import org.springframework.data.jpa.repository.JpaRepository;
++
++import java.util.UUID;
++
++/**
++ * Repository for CRUD operations on {@link Profile}.
++ */
++public interface ProfileRepository extends JpaRepository<Profile, UUID> {
++}
+diff --git a/src/main/java/com/gatherly/gatherly_api/service/ProfileService.java b/src/main/java/com/gatherly/gatherly_api/service/ProfileService.java
+new file mode 100644
+index 0000000..2c2ec9a
+--- /dev/null
++++ b/src/main/java/com/gatherly/gatherly_api/service/ProfileService.java
+@@ -0,0 +1,49 @@
++package com.gatherly.gatherly_api.service;
++
++import com.gatherly.gatherly_api.dto.UpdateMyProfileRequest;
++import com.gatherly.gatherly_api.model.Profile;
++import com.gatherly.gatherly_api.repository.ProfileRepository;
++import org.springframework.http.HttpStatus;
++import org.springframework.stereotype.Service;
++import org.springframework.web.server.ResponseStatusException;
++
++import java.util.UUID;
++
++/**
++ * Handles profile-related application logic.
++ */
++@Service
++public class ProfileService {
++
++    private final ProfileRepository profileRepository;
++
++    public ProfileService(ProfileRepository profileRepository) {
++        this.profileRepository = profileRepository;
++    }
++
++    public Profile getMyProfile(UUID userId) {
++        return findRequiredProfile(userId);
++    }
++
++    public Profile updateMyProfile(UUID userId, UpdateMyProfileRequest request) {
++        Profile profile = findRequiredProfile(userId);
++        profile.applySelfServiceUpdate(
++                request.fullName(),
++                request.avatarUrl(),
++                request.addressLine1(),
++                request.addressLine2(),
++                request.city(),
++                request.province(),
++                request.postalCode()
++        );
++        return profileRepository.save(profile);
++    }
++
++    private Profile findRequiredProfile(UUID userId) {
++        return profileRepository.findById(userId)
++                .orElseThrow(() -> new ResponseStatusException(
++                        HttpStatus.NOT_FOUND,
++                        "Profile not found for authenticated user."
++                ));
++    }
++}
+diff --git a/src/test/java/com/gatherly/gatherly_api/controller/ProfileControllerTest.java b/src/test/java/com/gatherly/gatherly_api/controller/ProfileControllerTest.java
+new file mode 100644
+index 0000000..3d11203
+--- /dev/null
++++ b/src/test/java/com/gatherly/gatherly_api/controller/ProfileControllerTest.java
+@@ -0,0 +1,189 @@
++package com.gatherly.gatherly_api.controller;
++
++import com.gatherly.gatherly_api.config.SecurityConfig;
++import com.gatherly.gatherly_api.dto.UpdateMyProfileRequest;
++import com.gatherly.gatherly_api.model.Profile;
++import com.gatherly.gatherly_api.model.Province;
++import com.gatherly.gatherly_api.model.Role;
++import com.gatherly.gatherly_api.service.ProfileService;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.test.context.TestConfiguration;
++import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
++import org.springframework.context.annotation.Bean;
++import org.springframework.context.annotation.Import;
++import org.springframework.http.HttpHeaders;
++import org.springframework.http.MediaType;
++import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
++import org.springframework.security.oauth2.jwt.Jwt;
++import org.springframework.security.oauth2.jwt.JwtDecoder;
++import org.springframework.test.web.servlet.MockMvc;
++import org.springframework.web.server.ResponseStatusException;
++
++import java.time.Instant;
++import java.time.OffsetDateTime;
++import java.util.UUID;
++import java.util.concurrent.atomic.AtomicReference;
++
++import static org.springframework.http.HttpStatus.NOT_FOUND;
++import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
++import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
++import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
++import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
++
++@WebMvcTest(ProfileController.class)
++@Import(SecurityConfig.class)
++class ProfileControllerTest {
++
++    private static final UUID TEST_USER_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
++    private static final AtomicReference<Profile> PROFILE = new AtomicReference<>(null);
++
++    @Autowired
++    private MockMvc mockMvc;
++
++    @TestConfiguration
++    @EnableMethodSecurity
++    static class TestConfig {
++        @Bean
++        ProfileService profileService() {
++            return new ProfileService(null) {
++                @Override
++                public Profile getMyProfile(UUID userId) {
++                    Profile current = PROFILE.get();
++                    if (current == null) {
++                        throw new ResponseStatusException(NOT_FOUND, "Profile not found for authenticated user.");
++                    }
++                    return current;
++                }
++
++                @Override
++                public Profile updateMyProfile(UUID userId, UpdateMyProfileRequest request) {
++                    Profile current = getMyProfile(userId);
++                    current.applySelfServiceUpdate(
++                            request.fullName(),
++                            request.avatarUrl(),
++                            request.addressLine1(),
++                            request.addressLine2(),
++                            request.city(),
++                            request.province(),
++                            request.postalCode()
++                    );
++                    PROFILE.set(current);
++                    return current;
++                }
++            };
++        }
++
++        @Bean
++        JwtDecoder jwtDecoder() {
++            return tokenValue -> {
++                if ("invalid".equals(tokenValue)) {
++                    throw new org.springframework.security.oauth2.core.OAuth2AuthenticationException(
++                            new org.springframework.security.oauth2.core.OAuth2Error("invalid_token"),
++                            "Invalid token"
++                    );
++                }
++
++                Instant now = Instant.now();
++                return Jwt.withTokenValue(tokenValue)
++                        .header("alg", "RS256")
++                        .subject(TEST_USER_ID.toString())
++                        .claim("role", "user")
++                        .issuedAt(now)
++                        .expiresAt(now.plusSeconds(3600))
++                        .build();
++            };
++        }
++    }
++
++    @Test
++    void getMe_withValidToken_returns200() throws Exception {
++        PROFILE.set(seedProfile());
++
++        mockMvc.perform(get("/api/profiles/me")
++                        .header(HttpHeaders.AUTHORIZATION, "Bearer user")
++                        .accept(MediaType.APPLICATION_JSON))
++                .andExpect(status().isOk())
++                .andExpect(jsonPath("$.id").value(TEST_USER_ID.toString()))
++                .andExpect(jsonPath("$.fullName").value("Jane Doe"))
++                .andExpect(jsonPath("$.email").value("jane@example.com"))
++                .andExpect(jsonPath("$.role").value("user"));
++    }
++
++    @Test
++    void putMe_withValidTokenAndBody_returns200() throws Exception {
++        PROFILE.set(seedProfile());
++
++        String body = """
++                {
++                  "fullName": "Jane Smith",
++                  "avatarUrl": "https://res.cloudinary.com/example/avatar.png",
++                  "addressLine1": "456 Queen St",
++                  "addressLine2": "Unit 8",
++                  "city": "Ottawa",
++                  "province": "ON",
++                  "postalCode": "K1A 0A9"
++                }
++                """;
++
++        mockMvc.perform(put("/api/profiles/me")
++                        .header(HttpHeaders.AUTHORIZATION, "Bearer user")
++                        .contentType(MediaType.APPLICATION_JSON)
++                        .content(body))
++                .andExpect(status().isOk())
++                .andExpect(jsonPath("$.fullName").value("Jane Smith"))
++                .andExpect(jsonPath("$.city").value("Ottawa"))
++                .andExpect(jsonPath("$.province").value("ON"))
++                .andExpect(jsonPath("$.postalCode").value("K1A 0A9"));
++    }
++
++    @Test
++    void getMe_missingToken_returns401() throws Exception {
++        mockMvc.perform(get("/api/profiles/me").accept(MediaType.APPLICATION_JSON))
++                .andExpect(status().isUnauthorized());
++    }
++
++    @Test
++    void getMe_invalidToken_returns401() throws Exception {
++        mockMvc.perform(get("/api/profiles/me")
++                        .header(HttpHeaders.AUTHORIZATION, "Bearer invalid")
++                        .accept(MediaType.APPLICATION_JSON))
++                .andExpect(status().isUnauthorized());
++    }
++
++    @Test
++    void putMe_invalidPayload_returns400() throws Exception {
++        PROFILE.set(seedProfile());
++
++        String body = """
++                {
++                  "fullName": "",
++                  "province": "XX",
++                  "postalCode": "not-valid"
++                }
++                """;
++
++        mockMvc.perform(put("/api/profiles/me")
++                        .header(HttpHeaders.AUTHORIZATION, "Bearer user")
++                        .contentType(MediaType.APPLICATION_JSON)
++                        .content(body))
++                .andExpect(status().isBadRequest());
++    }
++
++    private static Profile seedProfile() {
++        return Profile.builder()
++                .id(TEST_USER_ID)
++                .fullName("Jane Doe")
++                .email("jane@example.com")
++                .role(Role.user)
++                .avatarUrl(null)
++                .addressLine1("123 King St")
++                .addressLine2(null)
++                .city("Toronto")
++                .province(Province.ON)
++                .postalCode("M5V 2T6")
++                .createdAt(OffsetDateTime.parse("2026-03-18T10:00:00Z"))
++                .updatedAt(OffsetDateTime.parse("2026-03-18T10:00:00Z"))
++                .build();
++    }
++}
+diff --git a/src/test/java/com/gatherly/gatherly_api/service/ProfileServiceTest.java b/src/test/java/com/gatherly/gatherly_api/service/ProfileServiceTest.java
+new file mode 100644
+index 0000000..bafa06d
+--- /dev/null
++++ b/src/test/java/com/gatherly/gatherly_api/service/ProfileServiceTest.java
+@@ -0,0 +1,107 @@
++package com.gatherly.gatherly_api.service;
++
++import com.gatherly.gatherly_api.dto.UpdateMyProfileRequest;
++import com.gatherly.gatherly_api.model.Profile;
++import com.gatherly.gatherly_api.model.Province;
++import com.gatherly.gatherly_api.model.Role;
++import com.gatherly.gatherly_api.repository.ProfileRepository;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.extension.ExtendWith;
++import org.mockito.ArgumentCaptor;
++import org.mockito.InjectMocks;
++import org.mockito.Mock;
++import org.mockito.junit.jupiter.MockitoExtension;
++import org.springframework.web.server.ResponseStatusException;
++
++import java.time.OffsetDateTime;
++import java.util.Optional;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.Mockito.verify;
++import static org.mockito.Mockito.when;
++import static org.springframework.http.HttpStatus.NOT_FOUND;
++
++@ExtendWith(MockitoExtension.class)
++class ProfileServiceTest {
++
++    @Mock
++    private ProfileRepository profileRepository;
++
++    @InjectMocks
++    private ProfileService profileService;
++
++    @Test
++    void getMyProfile_whenPresent_returnsProfile() {
++        UUID userId = UUID.fromString("00000000-0000-0000-0000-000000000011");
++        Profile existing = profile(userId, "Original Name", "original@example.com", "user");
++        when(profileRepository.findById(userId)).thenReturn(Optional.of(existing));
++
++        Profile result = profileService.getMyProfile(userId);
++
++        assertEquals(userId, result.getId());
++        assertEquals("Original Name", result.getFullName());
++    }
++
++    @Test
++    void updateMyProfile_updatesEditableFieldsOnly() {
++        UUID userId = UUID.fromString("00000000-0000-0000-0000-000000000022");
++        Profile existing = profile(userId, "Original Name", "original@example.com", "user");
++        when(profileRepository.findById(userId)).thenReturn(Optional.of(existing));
++        when(profileRepository.save(any(Profile.class))).thenAnswer(invocation -> invocation.getArgument(0));
++
++        UpdateMyProfileRequest request = new UpdateMyProfileRequest(
++                "Updated Name",
++                "https://example.com/avatar.jpg",
++                "456 Queen St",
++                "Unit 2",
++                "Ottawa",
++                "ON",
++                "K1A 0A9"
++        );
++
++        Profile result = profileService.updateMyProfile(userId, request);
++
++        assertEquals("Updated Name", result.getFullName());
++        assertEquals("https://example.com/avatar.jpg", result.getAvatarUrl());
++        assertEquals("Ottawa", result.getCity());
++        assertEquals("original@example.com", result.getEmail());
++        assertEquals(Role.user, result.getRole());
++
++        ArgumentCaptor<Profile> captor = ArgumentCaptor.forClass(Profile.class);
++        verify(profileRepository).save(captor.capture());
++        assertEquals("Updated Name", captor.getValue().getFullName());
++    }
++
++    @Test
++    void getMyProfile_whenMissing_throws404() {
++        UUID userId = UUID.fromString("00000000-0000-0000-0000-000000000033");
++        when(profileRepository.findById(userId)).thenReturn(Optional.empty());
++
++        ResponseStatusException ex = assertThrows(
++                ResponseStatusException.class,
++                () -> profileService.getMyProfile(userId)
++        );
++
++        assertEquals(NOT_FOUND, ex.getStatusCode());
++    }
++
++    private static Profile profile(UUID id, String name, String email, String role) {
++        return Profile.builder()
++                .id(id)
++                .fullName(name)
++                .email(email)
++                .role(Role.valueOf(role))
++                .avatarUrl(null)
++                .addressLine1("123 King St")
++                .addressLine2(null)
++                .city("Toronto")
++                .province(Province.ON)
++                .postalCode("M5V 2T6")
++                .createdAt(OffsetDateTime.parse("2026-03-18T10:00:00Z"))
++                .updatedAt(OffsetDateTime.parse("2026-03-18T10:00:00Z"))
++                .build();
++    }
++}
+-- 
+2.49.0.windows.1
+
