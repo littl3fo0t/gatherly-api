@@ -18,12 +18,14 @@ import org.springframework.http.MediaType;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -44,6 +46,12 @@ class EventControllerTest {
             return new EventService(null, null, null, null, null) {
                 @Override
                 public EventResponse createEvent(UUID organizerId, CreateEventRequest request) {
+                    if ("trigger-service-400".equals(request.title())) {
+                        throw new ResponseStatusException(
+                                org.springframework.http.HttpStatus.BAD_REQUEST,
+                                "meetingLink is required for virtual and hybrid events."
+                        );
+                    }
                     return new EventResponse(
                             EVENT_ID,
                             request.title(),
@@ -206,7 +214,47 @@ class EventControllerTest {
         mockMvc.perform(post("/api/events")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer user")
                         .contentType(MediaType.APPLICATION_JSON)
+                        .accept(MediaType.TEXT_HTML)
                         .content(body))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.error").value("Bad Request"))
+                .andExpect(jsonPath("$.message").value("Validation failed."))
+                .andExpect(jsonPath("$.path").value("/api/events"))
+                .andExpect(jsonPath("$.errors[0].field").value("title"));
+    }
+
+    @Test
+    void postEvents_serviceRuleViolation_returns400Json() throws Exception {
+        String body = """
+                {
+                  "title": "trigger-service-400",
+                  "description": "D",
+                  "eventType": "in_person",
+                  "admissionType": "free",
+                  "startTime": "2026-04-01T18:00:00Z",
+                  "endTime": "2026-04-01T21:00:00Z",
+                  "timezone": "America/Toronto",
+                  "addressLine1": "1 St",
+                  "city": "Toronto",
+                  "province": "ON",
+                  "postalCode": "M5V 1A1",
+                  "maxCapacity": 10,
+                  "categoryIds": []
+                }
+                """;
+
+        mockMvc.perform(post("/api/events")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer user")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .accept(MediaType.TEXT_HTML)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.error").value("Bad Request"))
+                .andExpect(jsonPath("$.message").value("meetingLink is required for virtual and hybrid events."))
+                .andExpect(jsonPath("$.path").value("/api/events"));
     }
 }
