@@ -6,6 +6,7 @@ import com.gatherly.gatherly_api.service.EventService;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -56,9 +57,63 @@ public class EventController {
                                     schema = @Schema(implementation = EventResponse.class)
                             )
                     ),
-                    @ApiResponse(responseCode = "400", description = "Validation failed."),
-                    @ApiResponse(responseCode = "401", description = "Missing or invalid token."),
-                    @ApiResponse(responseCode = "404", description = "Authenticated profile not found.")
+                    @ApiResponse(
+                            responseCode = "400",
+                            description = "Validation failed.",
+                            content = @Content(
+                                    mediaType = "application/json",
+                                    examples = @ExampleObject(
+                                            name = "ValidationError",
+                                            value = """
+                                                    {
+                                                      "timestamp": "2026-03-11T10:00:00Z",
+                                                      "status": 400,
+                                                      "error": "Bad Request",
+                                                      "message": "meetingLink is required for virtual and hybrid events.",
+                                                      "path": "/api/events"
+                                                    }
+                                                    """
+                                    )
+                            )
+                    ),
+                    @ApiResponse(
+                            responseCode = "401",
+                            description = "Missing or invalid token.",
+                            content = @Content(
+                                    mediaType = "application/json",
+                                    examples = @ExampleObject(
+                                            name = "Unauthorized",
+                                            value = """
+                                                    {
+                                                      "timestamp": "2026-03-11T10:00:00Z",
+                                                      "status": 401,
+                                                      "error": "Unauthorized",
+                                                      "message": "Missing or invalid JWT token.",
+                                                      "path": "/api/events"
+                                                    }
+                                                    """
+                                    )
+                            )
+                    ),
+                    @ApiResponse(
+                            responseCode = "404",
+                            description = "Authenticated profile not found.",
+                            content = @Content(
+                                    mediaType = "application/json",
+                                    examples = @ExampleObject(
+                                            name = "ProfileMissing",
+                                            value = """
+                                                    {
+                                                      "timestamp": "2026-03-11T10:00:00Z",
+                                                      "status": 404,
+                                                      "error": "Not Found",
+                                                      "message": "Profile not found for authenticated user.",
+                                                      "path": "/api/events"
+                                                    }
+                                                    """
+                                    )
+                            )
+                    )
             }
     )
     public ResponseEntity<EventResponse> createEvent(
