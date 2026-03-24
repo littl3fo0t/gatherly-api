@@ -1,10 +1,12 @@
 package com.gatherly.gatherly_api.controller;
 
 import com.gatherly.gatherly_api.dto.CreateEventRequest;
+import com.gatherly.gatherly_api.dto.EventListResponse;
 import com.gatherly.gatherly_api.dto.EventResponse;
 import com.gatherly.gatherly_api.service.EventService;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -18,7 +20,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -35,7 +39,6 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/events")
 @Tag(name = "Events", description = "Authenticated event endpoints")
-@SecurityRequirement(name = "bearerAuth")
 public class EventController {
 
     private final EventService eventService;
@@ -44,10 +47,36 @@ public class EventController {
         this.eventService = eventService;
     }
 
+    @GetMapping
+    @Operation(
+            summary = "List active events",
+            description = "Returns a paginated list of active events, sorted with hot events first and then by start time.",
+            security = {},
+            responses = {
+                    @ApiResponse(
+                            responseCode = "200",
+                            description = "Page of active events.",
+                            content = @Content(
+                                    mediaType = "application/json",
+                                    schema = @Schema(implementation = EventListResponse.class)
+                            )
+                    )
+            }
+    )
+    public ResponseEntity<EventListResponse> getEvents(
+            @Parameter(description = "Zero-based page index. Defaults to 0.")
+            @RequestParam(defaultValue = "0") int page,
+            @Parameter(description = "Page size. Defaults to 25.")
+            @RequestParam(defaultValue = "25") int size
+    ) {
+        return ResponseEntity.ok(eventService.getEvents(page, size));
+    }
+
     @PostMapping
     @Operation(
             summary = "Create a new event",
             description = "Creates an event and sets the authenticated user as the organizer.",
+            security = @SecurityRequirement(name = "bearerAuth"),
             responses = {
                     @ApiResponse(
                             responseCode = "201",

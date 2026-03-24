@@ -1,10 +1,12 @@
 package com.gatherly.gatherly_api.service;
 
 import com.gatherly.gatherly_api.dto.CreateEventRequest;
+import com.gatherly.gatherly_api.dto.EventListResponse;
 import com.gatherly.gatherly_api.dto.EventResponse;
 import com.gatherly.gatherly_api.model.AdmissionType;
 import com.gatherly.gatherly_api.model.Category;
 import com.gatherly.gatherly_api.model.Event;
+import com.gatherly.gatherly_api.model.EventCategory;
 import com.gatherly.gatherly_api.model.EventStatus;
 import com.gatherly.gatherly_api.model.EventType;
 import com.gatherly.gatherly_api.model.Profile;
@@ -20,6 +22,8 @@ import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -367,6 +371,60 @@ class EventServiceTest {
         assertEquals(EventStatus.active, captor.getValue().getStatus());
     }
 
+    @Test
+    void getEvents_returnsMappedPageAndFiltersActiveInRepositoryCall() {
+        Event first = persistedEvent(eventDraft("Hot Event", 80, 100), SAVED_EVENT_ID);
+        Event second = persistedEvent(
+                eventDraft("Warm Event", 10, 100),
+                UUID.fromString("00000000-0000-0000-0000-0000000000bc")
+        );
+        when(eventRepository.findByStatusOrderForListing(
+                org.mockito.ArgumentMatchers.eq(EventStatus.active),
+                any(PageRequest.class)
+        )).thenReturn(new PageImpl<>(List.of(first, second), PageRequest.of(0, 25), 2));
+
+        Category meetup = Category.builder()
+                .id(CATEGORY_ID)
+                .name("Meetup")
+                .slug("meetup")
+                .createdAt(OffsetDateTime.parse("2026-01-01T00:00:00Z"))
+                .build();
+
+        EventCategory firstCategory = EventCategory.builder()
+                .id(UUID.fromString("00000000-0000-0000-0000-000000000031"))
+                .event(first)
+                .category(meetup)
+                .createdAt(OffsetDateTime.parse("2026-01-01T00:00:00Z"))
+                .build();
+
+        when(eventCategoryRepository.findByEvent_IdIn(List.of(first.getId(), second.getId())))
+                .thenReturn(List.of(firstCategory));
+
+        EventListResponse response = eventService.getEvents(0, 25);
+
+        assertEquals(2, response.content().size());
+        assertEquals("Hot Event", response.content().get(0).title());
+        assertEquals(true, response.content().get(0).isHot());
+        assertEquals(List.of("Meetup"), response.content().get(0).categories());
+        assertEquals(List.of(), response.content().get(1).categories());
+        assertEquals(2, response.totalElements());
+    }
+
+    @Test
+    void getEvents_emptyPage_returnsValidEnvelope() {
+        when(eventRepository.findByStatusOrderForListing(
+                org.mockito.ArgumentMatchers.eq(EventStatus.active),
+                any(PageRequest.class)
+        )).thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 25), 0));
+
+        EventListResponse response = eventService.getEvents(0, 25);
+
+        assertEquals(0, response.content().size());
+        assertEquals(0, response.totalElements());
+        assertEquals(0, response.totalPages());
+        verify(eventCategoryRepository, never()).findByEvent_IdIn(anyList());
+    }
+
     private static CreateEventRequest validInPersonRequest(List<UUID> categoryIds) {
         return new CreateEventRequest(
                 "Spring Meetup",
@@ -412,7 +470,7 @@ class EventServiceTest {
                 .startTime(draft.getStartTime())
                 .endTime(draft.getEndTime())
                 .maxCapacity(draft.getMaxCapacity())
-                .rsvpCount(0)
+                .rsvpCount(draft.getRsvpCount())
                 .status(draft.getStatus())
                 .flagReason(draft.getFlagReason())
                 .flaggedBy(draft.getFlaggedBy())
@@ -420,6 +478,30 @@ class EventServiceTest {
                 .deletedAt(draft.getDeletedAt())
                 .createdAt(OffsetDateTime.parse("2026-01-01T12:00:00Z"))
                 .updatedAt(OffsetDateTime.parse("2026-01-01T12:00:00Z"))
+                .build();
+    }
+
+    private static Event eventDraft(String title, int rsvpCount, int maxCapacity) {
+        return Event.builder()
+                .organizer(Profile.builder().id(ORGANIZER_ID).fullName("Jane Doe").build())
+                .title(title)
+                .description("<p>D</p>")
+                .coverImageUrl(null)
+                .eventType(EventType.in_person)
+                .admissionType(AdmissionType.free)
+                .admissionFee(null)
+                .meetingLink(null)
+                .addressLine1("123 Main St")
+                .addressLine2(null)
+                .city("Toronto")
+                .province(Province.ON)
+                .postalCode("M5V 1A1")
+                .timezone("America/Toronto")
+                .startTime(OffsetDateTime.parse("2026-04-01T18:00:00Z"))
+                .endTime(OffsetDateTime.parse("2026-04-01T21:00:00Z"))
+                .maxCapacity(maxCapacity)
+                .rsvpCount(rsvpCount)
+                .status(EventStatus.active)
                 .build();
     }
 }

@@ -16,4 +16,9 @@ public interface EventCategoryRepository extends JpaRepository<EventCategory, UU
      * Loads all category links for an event, used when building API responses.
      */
     List<EventCategory> findByEvent_Id(UUID eventId);
+
+    /**
+     * Loads category links for many events in one query to avoid N+1 selects on list pages.
+     */
+    List<EventCategory> findByEvent_IdIn(List<UUID> eventIds);
 }
