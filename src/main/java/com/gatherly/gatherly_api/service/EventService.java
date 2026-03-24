@@ -1,6 +1,8 @@
 package com.gatherly.gatherly_api.service;
 
 import com.gatherly.gatherly_api.dto.CreateEventRequest;
+import com.gatherly.gatherly_api.dto.EventListItemResponse;
+import com.gatherly.gatherly_api.dto.EventListResponse;
 import com.gatherly.gatherly_api.dto.EventResponse;
 import com.gatherly.gatherly_api.model.AdmissionType;
 import com.gatherly.gatherly_api.model.Category;
@@ -17,6 +19,8 @@ import com.gatherly.gatherly_api.repository.ProfileRepository;
 import jakarta.persistence.EntityManager;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -25,6 +29,8 @@ import java.math.BigDecimal;
 import java.net.URI;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +52,9 @@ import java.util.stream.Collectors;
  */
 @Service
 public class EventService {
+    private static final int DEFAULT_PAGE = 0;
+    private static final int DEFAULT_SIZE = 25;
+    private static final int MAX_PAGE_SIZE = 100;
 
     /** Looks up the organizer’s {@link Profile} row (the user id from the JWT). */
     private final ProfileRepository profileRepository;
@@ -117,6 +126,38 @@ public class EventService {
 
         List<String> categoryNames = categories.stream().map(Category::getName).toList();
         return EventResponse.from(saved, categoryNames);
+    }
+
+    /**
+     * Returns one page of public event listings (active only).
+     * <p>
+     * Sorting is handled by the repository query to keep paging stable:
+     * hot events first, then start time.
+     */
+    @Transactional(readOnly = true)
+    public EventListResponse getEvents(int page, int size) {
+        int normalizedPage = Math.max(page, DEFAULT_PAGE);
+        int normalizedSize = normalizeSize(size);
+        PageRequest pageable = PageRequest.of(normalizedPage, normalizedSize);
+
+        Page<Event> eventsPage = eventRepository.findByStatusOrderForListing(EventStatus.active, pageable);
+        List<Event> events = eventsPage.getContent();
+        Map<UUID, List<String>> categoriesByEventId = loadCategoryNamesByEventId(events);
+
+        List<EventListItemResponse> content = events.stream()
+                .map(event -> EventListItemResponse.from(
+                        event,
+                        categoriesByEventId.getOrDefault(event.getId(), List.of())
+                ))
+                .toList();
+
+        return new EventListResponse(
+                content,
+                eventsPage.getNumber(),
+                eventsPage.getSize(),
+                eventsPage.getTotalElements(),
+                eventsPage.getTotalPages()
+        );
     }
 
     /**
@@ -308,5 +349,43 @@ public class EventService {
     /** Empty or whitespace-only optional strings become {@code null} so we store clean SQL {@code NULL}s. */
     private static String blankToNull(String value) {
         return isBlank(value) ? null : value.trim();
+    }
+
+    private static int normalizeSize(int size) {
+        if (size <= 0) {
+            return DEFAULT_SIZE;
+        }
+        return Math.min(size, MAX_PAGE_SIZE);
+    }
+
+    private List<String> sortedCategoryNamesForEvent(List<EventCategory> linksForEvent) {
+        return linksForEvent.stream()
+                .filter(link -> link.getCategory() != null && link.getCategory().getName() != null)
+                .sorted(Comparator.comparing(EventCategory::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(link -> link.getCategory().getName())
+                .toList();
+    }
+
+    private Map<UUID, List<String>> loadCategoryNamesByEventId(List<Event> events) {
+        if (events.isEmpty()) {
+            return Map.of();
+        }
+        List<UUID> eventIds = events.stream().map(Event::getId).toList();
+        List<EventCategory> links = eventCategoryRepository.findByEvent_IdIn(eventIds);
+
+        Map<UUID, List<EventCategory>> linksByEventId = links.stream()
+                .filter(link -> link.getEvent() != null && link.getEvent().getId() != null)
+                .collect(Collectors.groupingBy(
+                        link -> link.getEvent().getId(),
+                        LinkedHashMap::new,
+                        Collectors.toList()
+                ));
+
+        Map<UUID, List<String>> namesByEventId = new LinkedHashMap<>();
+        for (UUID eventId : eventIds) {
+            List<EventCategory> linksForEvent = linksByEventId.getOrDefault(eventId, List.of());
+            namesByEventId.put(eventId, sortedCategoryNamesForEvent(linksForEvent));
+        }
+        return namesByEventId;
     }
 }

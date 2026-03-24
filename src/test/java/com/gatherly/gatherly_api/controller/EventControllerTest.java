@@ -3,6 +3,8 @@ package com.gatherly.gatherly_api.controller;
 import com.gatherly.gatherly_api.config.SecurityConfig;
 import com.gatherly.gatherly_api.dto.CreateEventRequest;
 import com.gatherly.gatherly_api.dto.EventAddressResponse;
+import com.gatherly.gatherly_api.dto.EventListItemResponse;
+import com.gatherly.gatherly_api.dto.EventListResponse;
 import com.gatherly.gatherly_api.dto.EventOrganizerResponse;
 import com.gatherly.gatherly_api.dto.EventResponse;
 import com.gatherly.gatherly_api.service.EventService;
@@ -21,9 +23,11 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -44,6 +48,33 @@ class EventControllerTest {
         @Bean
         EventService eventService() {
             return new EventService(null, null, null, null, null) {
+                @Override
+                public EventListResponse getEvents(int page, int size) {
+                    return new EventListResponse(
+                            List.of(new EventListItemResponse(
+                                    EVENT_ID,
+                                    "Spring Meetup 2026",
+                                    "in_person",
+                                    "free",
+                                    null,
+                                    OffsetDateTime.parse("2026-04-01T18:00:00Z"),
+                                    OffsetDateTime.parse("2026-04-01T21:00:00Z"),
+                                    "America/Toronto",
+                                    "Toronto",
+                                    "ON",
+                                    null,
+                                    42,
+                                    50,
+                                    true,
+                                    List.of("Meetup", "Tech")
+                            )),
+                            page,
+                            size,
+                            1,
+                            1
+                    );
+                }
+
                 @Override
                 public EventResponse createEvent(UUID organizerId, CreateEventRequest request) {
                     if ("trigger-service-400".equals(request.title())) {
@@ -136,6 +167,28 @@ class EventControllerTest {
                 .andExpect(jsonPath("$.eventType").value("in_person"))
                 .andExpect(jsonPath("$.rsvpCount").value(0))
                 .andExpect(jsonPath("$.organizer.fullName").value("Jane Doe"));
+    }
+
+    @Test
+    void getEvents_withoutToken_returns200() throws Exception {
+        mockMvc.perform(get("/api/events"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.size").value(25))
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.totalPages").value(1))
+                .andExpect(jsonPath("$.content[0].id").value(EVENT_ID.toString()))
+                .andExpect(jsonPath("$.content[0].title").value("Spring Meetup 2026"))
+                .andExpect(jsonPath("$.content[0].isHot").value(true))
+                .andExpect(jsonPath("$.content[0].categories[0]").value("Meetup"));
+    }
+
+    @Test
+    void getEvents_withQueryParams_returnsRequestedPageAndSize() throws Exception {
+        mockMvc.perform(get("/api/events?page=2&size=10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.page").value(2))
+                .andExpect(jsonPath("$.size").value(10));
     }
 
     @Test
