@@ -76,6 +76,34 @@ class EventControllerTest {
                 }
 
                 @Override
+                public EventResponse getEventById(UUID eventId, boolean includeOrganizer) {
+                    if (UUID.fromString("00000000-0000-0000-0000-0000000000ff").equals(eventId)) {
+                        throw new ResponseStatusException(
+                                org.springframework.http.HttpStatus.NOT_FOUND,
+                                "Event not found."
+                        );
+                    }
+                    return new EventResponse(
+                            eventId,
+                            "Event Title",
+                            "<p>Detail</p>",
+                            "in_person",
+                            "free",
+                            null,
+                            OffsetDateTime.parse("2026-04-01T18:00:00Z"),
+                            OffsetDateTime.parse("2026-04-01T21:00:00Z"),
+                            "America/Toronto",
+                            new EventAddressResponse("123 Main St", null, "Toronto", "ON", "M5V 1A1"),
+                            "https://example.com/cover.png",
+                            7,
+                            50,
+                            false,
+                            List.of("Meetup"),
+                            includeOrganizer ? new EventOrganizerResponse(USER_ID, "Jane Doe") : null
+                    );
+                }
+
+                @Override
                 public EventResponse createEvent(UUID organizerId, CreateEventRequest request) {
                     if ("trigger-service-400".equals(request.title())) {
                         throw new ResponseStatusException(
@@ -189,6 +217,43 @@ class EventControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.page").value(2))
                 .andExpect(jsonPath("$.size").value(10));
+    }
+
+    @Test
+    void getEventById_withoutToken_returns200WithoutOrganizer() throws Exception {
+        mockMvc.perform(get("/api/events/" + EVENT_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(EVENT_ID.toString()))
+                .andExpect(jsonPath("$.title").value("Event Title"))
+                .andExpect(jsonPath("$.organizer").doesNotExist());
+    }
+
+    @Test
+    void getEventById_withValidToken_returns200WithOrganizer() throws Exception {
+        mockMvc.perform(get("/api/events/" + EVENT_ID)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(EVENT_ID.toString()))
+                .andExpect(jsonPath("$.organizer.id").value(USER_ID.toString()));
+    }
+
+    @Test
+    void getEventById_withInvalidToken_treatedAsAnonymous() throws Exception {
+        mockMvc.perform(get("/api/events/" + EVENT_ID)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer invalid"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(EVENT_ID.toString()))
+                .andExpect(jsonPath("$.organizer").doesNotExist());
+    }
+
+    @Test
+    void getEventById_missing_returns404Json() throws Exception {
+        mockMvc.perform(get("/api/events/00000000-0000-0000-0000-0000000000ff")
+                        .accept(MediaType.TEXT_HTML))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.path").value("/api/events/00000000-0000-0000-0000-0000000000ff"));
     }
 
     @Test

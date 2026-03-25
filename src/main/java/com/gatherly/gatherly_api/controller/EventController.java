@@ -16,13 +16,17 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 
 import jakarta.validation.Valid;
 
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -42,9 +46,11 @@ import java.util.UUID;
 public class EventController {
 
     private final EventService eventService;
+    private final JwtDecoder jwtDecoder;
 
-    public EventController(EventService eventService) {
+    public EventController(EventService eventService, JwtDecoder jwtDecoder) {
         this.eventService = eventService;
+        this.jwtDecoder = jwtDecoder;
     }
 
     @GetMapping
@@ -70,6 +76,34 @@ public class EventController {
             @RequestParam(defaultValue = "25") int size
     ) {
         return ResponseEntity.ok(eventService.getEvents(page, size));
+    }
+
+    @GetMapping("/{id}")
+    @Operation(
+            summary = "Get event details",
+            description = "Returns full details for one active event. Organizer is included only when a valid JWT is supplied.",
+            security = {},
+            responses = {
+                    @ApiResponse(
+                            responseCode = "200",
+                            description = "Event details.",
+                            content = @Content(
+                                    mediaType = "application/json",
+                                    schema = @Schema(implementation = EventResponse.class)
+                            )
+                    ),
+                    @ApiResponse(
+                            responseCode = "404",
+                            description = "Event not found or not active."
+                    )
+            }
+    )
+    public ResponseEntity<EventResponse> getEventById(
+            @PathVariable UUID id,
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorizationHeader
+    ) {
+        boolean includeOrganizer = readOptionalUserIdFromAuthorizationHeader(authorizationHeader) != null;
+        return ResponseEntity.ok(eventService.getEventById(id, includeOrganizer));
     }
 
     @PostMapping
@@ -165,6 +199,29 @@ public class EventController {
             return UUID.fromString(jwt.getSubject());
         } catch (IllegalArgumentException exception) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid user subject in token.");
+        }
+    }
+
+    /**
+     * Best-effort JWT parsing for public routes: invalid tokens are treated as anonymous callers.
+     */
+    private UUID readOptionalUserIdFromAuthorizationHeader(String authorizationHeader) {
+        if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
+            return null;
+        }
+        String tokenValue = authorizationHeader.substring("Bearer ".length()).trim();
+        if (tokenValue.isEmpty()) {
+            return null;
+        }
+        try {
+            Jwt jwt = jwtDecoder.decode(tokenValue);
+            String subject = jwt.getSubject();
+            if (subject == null || subject.isBlank()) {
+                return null;
+            }
+            return UUID.fromString(subject);
+        } catch (RuntimeException ex) {
+            return null;
         }
     }
 }
