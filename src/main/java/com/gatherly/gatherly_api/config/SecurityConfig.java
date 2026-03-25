@@ -9,6 +9,8 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.web.BearerTokenResolver;
+import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
 import org.springframework.security.web.SecurityFilterChain;
 
 import com.gatherly.gatherly_api.security.RestAccessDeniedHandler;
@@ -74,16 +76,34 @@ public class SecurityConfig {
                         ).permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/categories").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/events").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/events/*").permitAll()
                         .anyRequest().authenticated()
                 )
                 // Validate JWTs for any endpoint that requires authentication.
                 .oauth2ResourceServer(oauth2 -> oauth2
+                        .bearerTokenResolver(publicEventReadBearerTokenResolver())
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))
                         // If the token is missing/invalid, Spring will use our JSON 401 handler.
                         .authenticationEntryPoint(authenticationEntryPoint)
                 );
 
         return http.build();
+    }
+
+    /**
+     * Public event reads should not fail on invalid tokens; controller handles token best-effort.
+     */
+    @Bean
+    public BearerTokenResolver publicEventReadBearerTokenResolver() {
+        DefaultBearerTokenResolver delegate = new DefaultBearerTokenResolver();
+        return request -> {
+            String path = request.getRequestURI();
+            String method = request.getMethod();
+            if ("GET".equalsIgnoreCase(method) && path != null && path.matches("^/api/events/[^/]+$")) {
+                return null;
+            }
+            return delegate.resolve(request);
+        };
     }
 }
 

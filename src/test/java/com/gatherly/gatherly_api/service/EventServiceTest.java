@@ -425,6 +425,60 @@ class EventServiceTest {
         verify(eventCategoryRepository, never()).findByEvent_IdIn(anyList());
     }
 
+    @Test
+    void getEventById_includeOrganizerTrue_returnsOrganizer() {
+        Event event = persistedEvent(eventDraft("Detail Event", 20, 100), SAVED_EVENT_ID);
+        event = persistedEventWithOrganizer(event, organizer);
+        when(eventRepository.findByIdAndStatus(SAVED_EVENT_ID, EventStatus.active)).thenReturn(Optional.of(event));
+
+        Category category = Category.builder()
+                .id(CATEGORY_ID)
+                .name("Meetup")
+                .slug("meetup")
+                .createdAt(OffsetDateTime.parse("2026-01-01T00:00:00Z"))
+                .build();
+        EventCategory link = EventCategory.builder()
+                .id(UUID.fromString("00000000-0000-0000-0000-000000000091"))
+                .event(event)
+                .category(category)
+                .createdAt(OffsetDateTime.parse("2026-01-01T00:00:00Z"))
+                .build();
+        when(eventCategoryRepository.findByEvent_Id(SAVED_EVENT_ID)).thenReturn(List.of(link));
+
+        EventResponse response = eventService.getEventById(SAVED_EVENT_ID, true);
+
+        assertEquals(SAVED_EVENT_ID, response.id());
+        assertEquals("Detail Event", response.title());
+        assertEquals("Meetup", response.categories().get(0));
+        assertEquals(ORGANIZER_ID, response.organizer().id());
+    }
+
+    @Test
+    void getEventById_includeOrganizerFalse_omitsOrganizer() {
+        Event event = persistedEventWithOrganizer(
+                persistedEvent(eventDraft("Detail Event", 20, 100), SAVED_EVENT_ID),
+                organizer
+        );
+        when(eventRepository.findByIdAndStatus(SAVED_EVENT_ID, EventStatus.active)).thenReturn(Optional.of(event));
+        when(eventCategoryRepository.findByEvent_Id(SAVED_EVENT_ID)).thenReturn(List.of());
+
+        EventResponse response = eventService.getEventById(SAVED_EVENT_ID, false);
+
+        assertEquals(SAVED_EVENT_ID, response.id());
+        assertEquals(null, response.organizer());
+    }
+
+    @Test
+    void getEventById_missing_throws404() {
+        when(eventRepository.findByIdAndStatus(SAVED_EVENT_ID, EventStatus.active)).thenReturn(Optional.empty());
+
+        ResponseStatusException ex = assertThrows(
+                ResponseStatusException.class,
+                () -> eventService.getEventById(SAVED_EVENT_ID, false)
+        );
+        assertEquals(NOT_FOUND, ex.getStatusCode());
+    }
+
     private static CreateEventRequest validInPersonRequest(List<UUID> categoryIds) {
         return new CreateEventRequest(
                 "Spring Meetup",
@@ -502,6 +556,37 @@ class EventServiceTest {
                 .maxCapacity(maxCapacity)
                 .rsvpCount(rsvpCount)
                 .status(EventStatus.active)
+                .build();
+    }
+
+    private static Event persistedEventWithOrganizer(Event event, Profile organizerProfile) {
+        return Event.builder()
+                .id(event.getId())
+                .organizer(organizerProfile)
+                .title(event.getTitle())
+                .description(event.getDescription())
+                .coverImageUrl(event.getCoverImageUrl())
+                .eventType(event.getEventType())
+                .admissionType(event.getAdmissionType())
+                .admissionFee(event.getAdmissionFee())
+                .meetingLink(event.getMeetingLink())
+                .addressLine1(event.getAddressLine1())
+                .addressLine2(event.getAddressLine2())
+                .city(event.getCity())
+                .province(event.getProvince())
+                .postalCode(event.getPostalCode())
+                .timezone(event.getTimezone())
+                .startTime(event.getStartTime())
+                .endTime(event.getEndTime())
+                .maxCapacity(event.getMaxCapacity())
+                .rsvpCount(event.getRsvpCount())
+                .status(event.getStatus())
+                .flagReason(event.getFlagReason())
+                .flaggedBy(event.getFlaggedBy())
+                .flaggedAt(event.getFlaggedAt())
+                .deletedAt(event.getDeletedAt())
+                .createdAt(event.getCreatedAt())
+                .updatedAt(event.getUpdatedAt())
                 .build();
     }
 }

@@ -8,6 +8,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -32,4 +33,9 @@ public interface EventRepository extends JpaRepository<Event, UUID> {
               e.id ASC
             """)
     Page<Event> findByStatusOrderForListing(EventStatus status, Pageable pageable);
+
+    /**
+     * Finds one event by id only when it is in the requested status.
+     */
+    Optional<Event> findByIdAndStatus(UUID id, EventStatus status);
 }

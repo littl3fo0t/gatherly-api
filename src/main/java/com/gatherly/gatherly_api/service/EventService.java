@@ -161,6 +161,46 @@ public class EventService {
     }
 
     /**
+     * Loads one active event by id.
+     * <p>
+     * The caller decides whether organizer details should be included.
+     */
+    @Transactional(readOnly = true)
+    public EventResponse getEventById(UUID eventId, boolean includeOrganizer) {
+        Event event = eventRepository.findByIdAndStatus(eventId, EventStatus.active)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Event not found."));
+
+        List<String> categoryNames = eventCategoryRepository.findByEvent_Id(eventId).stream()
+                .filter(link -> link.getCategory() != null && link.getCategory().getName() != null)
+                .sorted(Comparator.comparing(EventCategory::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(link -> link.getCategory().getName())
+                .toList();
+
+        EventResponse response = EventResponse.from(event, categoryNames);
+        if (includeOrganizer) {
+            return response;
+        }
+        return new EventResponse(
+                response.id(),
+                response.title(),
+                response.description(),
+                response.eventType(),
+                response.admissionType(),
+                response.admissionFee(),
+                response.startTime(),
+                response.endTime(),
+                response.timezone(),
+                response.address(),
+                response.coverImageUrl(),
+                response.rsvpCount(),
+                response.maxCapacity(),
+                response.isHot(),
+                response.categories(),
+                null
+        );
+    }
+
+    /**
      * Maps the HTTP request DTO into a new {@link Event} entity. New events start as
      * {@link EventStatus#active} with no flag or soft-delete fields set.
      */
