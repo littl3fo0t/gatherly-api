@@ -3,6 +3,7 @@ package com.gatherly.gatherly_api.service;
 import com.gatherly.gatherly_api.dto.CreateEventRequest;
 import com.gatherly.gatherly_api.dto.EventListResponse;
 import com.gatherly.gatherly_api.dto.EventResponse;
+import com.gatherly.gatherly_api.dto.OrganizerEventListResponse;
 import com.gatherly.gatherly_api.model.AdmissionType;
 import com.gatherly.gatherly_api.model.Category;
 import com.gatherly.gatherly_api.model.Event;
@@ -28,18 +29,23 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Pageable;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -423,6 +429,74 @@ class EventServiceTest {
         assertEquals(0, response.totalElements());
         assertEquals(0, response.totalPages());
         verify(eventCategoryRepository, never()).findByEvent_IdIn(anyList());
+    }
+
+    @Test
+    void getMyEvents_returnsMappedPageAndCallsRepository() {
+        Event e = persistedEventWithOrganizer(
+                persistedEvent(eventDraft("Mine", 1, 50), SAVED_EVENT_ID),
+                organizer
+        );
+        when(eventRepository.findOrganizerDashboardEventsAll(
+                eq(ORGANIZER_ID),
+                any(OffsetDateTime.class),
+                eq(EventStatus.soft_deleted),
+                any(PageRequest.class)
+        )).thenReturn(new PageImpl<>(List.of(e), PageRequest.of(0, 25), 1));
+        when(eventCategoryRepository.findByEvent_IdIn(List.of(e.getId()))).thenReturn(List.of());
+
+        OrganizerEventListResponse response = eventService.getMyEvents(ORGANIZER_ID, null, 0, 25);
+
+        assertEquals(1, response.content().size());
+        assertEquals("Mine", response.content().get(0).title());
+        assertEquals("active", response.content().get(0).status());
+        assertEquals(ORGANIZER_ID, response.content().get(0).organizer().id());
+        assertEquals(1, response.totalElements());
+    }
+
+    @Test
+    void getMyEvents_passesStatusFilterToRepository() {
+        when(eventRepository.findOrganizerDashboardEventsFiltered(
+                eq(ORGANIZER_ID),
+                any(OffsetDateTime.class),
+                eq(EventStatus.soft_deleted),
+                eq(EventStatus.flagged),
+                any(PageRequest.class)
+        )).thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 25), 0));
+
+        OrganizerEventListResponse response = eventService.getMyEvents(ORGANIZER_ID, EventStatus.flagged, 0, 25);
+
+        assertEquals(0, response.content().size());
+        verify(eventRepository).findOrganizerDashboardEventsFiltered(
+                eq(ORGANIZER_ID),
+                any(OffsetDateTime.class),
+                eq(EventStatus.soft_deleted),
+                eq(EventStatus.flagged),
+                any(Pageable.class)
+        );
+    }
+
+    @Test
+    void getMyEvents_usesGraceCutoffSevenDaysAgoUtc() {
+        when(eventRepository.findOrganizerDashboardEventsAll(
+                eq(ORGANIZER_ID),
+                any(OffsetDateTime.class),
+                eq(EventStatus.soft_deleted),
+                any(PageRequest.class)
+        )).thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 25), 0));
+
+        eventService.getMyEvents(ORGANIZER_ID, null, 0, 25);
+
+        ArgumentCaptor<OffsetDateTime> graceCaptor = ArgumentCaptor.forClass(OffsetDateTime.class);
+        verify(eventRepository).findOrganizerDashboardEventsAll(
+                eq(ORGANIZER_ID),
+                graceCaptor.capture(),
+                eq(EventStatus.soft_deleted),
+                any(Pageable.class)
+        );
+        OffsetDateTime expected = OffsetDateTime.now(ZoneOffset.UTC).minusDays(7);
+        long deltaSeconds = Math.abs(ChronoUnit.SECONDS.between(graceCaptor.getValue(), expected));
+        assertTrue(deltaSeconds <= 3L);
     }
 
     @Test

@@ -4,6 +4,8 @@ import com.gatherly.gatherly_api.dto.CreateEventRequest;
 import com.gatherly.gatherly_api.dto.EventListItemResponse;
 import com.gatherly.gatherly_api.dto.EventListResponse;
 import com.gatherly.gatherly_api.dto.EventResponse;
+import com.gatherly.gatherly_api.dto.OrganizerEventItemResponse;
+import com.gatherly.gatherly_api.dto.OrganizerEventListResponse;
 import com.gatherly.gatherly_api.model.AdmissionType;
 import com.gatherly.gatherly_api.model.Category;
 import com.gatherly.gatherly_api.model.Event;
@@ -28,6 +30,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -47,14 +50,15 @@ import java.util.stream.Collectors;
  * a meeting link and an address.” That keeps controllers thin and makes the same logic
  * reusable if you add another entry point later (for example a CLI or batch job).
  * <p>
- * Today this class only implements {@link #createEvent}; list/detail/update endpoints
- * can call into here as you add them.
+ * Implements create, public list/detail reads, and the organizer dashboard list.
  */
 @Service
 public class EventService {
     private static final int DEFAULT_PAGE = 0;
     private static final int DEFAULT_SIZE = 25;
     private static final int MAX_PAGE_SIZE = 100;
+    /** Soft-deleted events remain visible to the organizer until this many days after {@code deleted_at}. */
+    private static final int SOFT_DELETE_GRACE_DAYS = 7;
 
     /** Looks up the organizer’s {@link Profile} row (the user id from the JWT). */
     private final ProfileRepository profileRepository;
@@ -152,6 +156,50 @@ public class EventService {
                 .toList();
 
         return new EventListResponse(
+                content,
+                eventsPage.getNumber(),
+                eventsPage.getSize(),
+                eventsPage.getTotalElements(),
+                eventsPage.getTotalPages()
+        );
+    }
+
+    /**
+     * Paginated dashboard for the organizer: all non-purged lifecycle states, with optional status filter.
+     * Soft-deleted rows outside the grace window are excluded at query time.
+     */
+    @Transactional(readOnly = true)
+    public OrganizerEventListResponse getMyEvents(UUID organizerId, EventStatus statusFilter, int page, int size) {
+        int normalizedPage = Math.max(page, DEFAULT_PAGE);
+        int normalizedSize = normalizeSize(size);
+        PageRequest pageable = PageRequest.of(normalizedPage, normalizedSize);
+        OffsetDateTime graceCutoff = OffsetDateTime.now(ZoneOffset.UTC).minusDays(SOFT_DELETE_GRACE_DAYS);
+
+        Page<Event> eventsPage = statusFilter == null
+                ? eventRepository.findOrganizerDashboardEventsAll(
+                        organizerId,
+                        graceCutoff,
+                        EventStatus.soft_deleted,
+                        pageable
+                )
+                : eventRepository.findOrganizerDashboardEventsFiltered(
+                        organizerId,
+                        graceCutoff,
+                        EventStatus.soft_deleted,
+                        statusFilter,
+                        pageable
+                );
+        List<Event> events = eventsPage.getContent();
+        Map<UUID, List<String>> categoriesByEventId = loadCategoryNamesByEventId(events);
+
+        List<OrganizerEventItemResponse> content = events.stream()
+                .map(event -> OrganizerEventItemResponse.from(
+                        event,
+                        categoriesByEventId.getOrDefault(event.getId(), List.of())
+                ))
+                .toList();
+
+        return new OrganizerEventListResponse(
                 content,
                 eventsPage.getNumber(),
                 eventsPage.getSize(),

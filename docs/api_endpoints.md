@@ -401,22 +401,89 @@ Flags an event. Restricted to `moderator` and `admin` roles only.
 ---
 
 #### `GET /events/my`
-Returns all events created by the authenticated user, grouped by status — including active, archived, flagged and soft deleted (within the 7 day window).
+Returns a **complete dashboard view** of every event the authenticated user has created that still exists in the database — more detail than the public listing (`GET /events`) and across all lifecycle states you care about as the organizer.
+
+**Included:**
+
+| Group | Meaning |
+|---|---|
+| **Active** | Live on the public listing; accepting RSVPs. |
+| **Archived** | Past end time; no longer shown on the main public listing. |
+| **Flagged** | Hidden from the public; you still see the event with `flagReason`, `flaggedAt`, and `flaggedBy` so you know why it was flagged. |
+| **Soft deleted** | Only rows still within the **7-day grace** window after `deleted_at` (before a future CRON job purges them permanently). |
+
+**Excluded:**
+
+| Case | Reason |
+|---|---|
+| **Purged** | Hard-deleted from the database — nothing to return. |
+| **Other users’ events** | Scoped strictly to the authenticated organizer. |
+| **Soft deleted (expired grace)** | `deleted_at` is older than 7 days; row may still exist until purge runs, but it does not appear here. |
 
 **Query parameters:**
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `status` | `string` | ❌ | Filter by status: `active`, `archived`, `flagged`, `soft_deleted`. Returns all if omitted. |
-| `page` | `integer` | ❌ | Defaults to `0`. |
-| `size` | `integer` | ❌ | Defaults to `25`. |
+| `status` | `string` | ❌ | Filter to one lifecycle group: `active`, `archived`, `flagged`, `soft_deleted`. Omit to return all groups that pass the rules above. |
+| `page` | `integer` | ❌ | Zero-based page index. Defaults to `0`. |
+| `size` | `integer` | ❌ | Page size. Defaults to `25`. Maximum `100` per request. |
+
+Results are sorted by **`startTime` descending**, then by `id` for a stable order.
 
 **Responses:**
 
 | Status | Description |
 |---|---|
-| `200 OK` | Returns paginated list of the user's events. |
+| `200 OK` | Paginated list of your events (see success body below). |
+| `400 Bad Request` | Invalid `status` query value (not one of the allowed enum labels). |
 | `401 Unauthorized` | Missing or invalid token. |
+
+**Success response body:**
+```json
+{
+  "content": [
+    {
+      "id": "uuid",
+      "title": "Spring Meetup 2026",
+      "description": "<p>Rich text content here...</p>",
+      "eventType": "in_person",
+      "admissionType": "free",
+      "admissionFee": null,
+      "meetingLink": null,
+      "startTime": "2026-04-01T18:00:00Z",
+      "endTime": "2026-04-01T21:00:00Z",
+      "timezone": "America/Toronto",
+      "address": {
+        "addressLine1": "123 Main St",
+        "addressLine2": null,
+        "city": "Toronto",
+        "province": "ON",
+        "postalCode": "M5V 1A1"
+      },
+      "coverImageUrl": "https://res.cloudinary.com/...",
+      "rsvpCount": 42,
+      "maxCapacity": 50,
+      "isHot": true,
+      "categories": ["Meetup", "Tech"],
+      "status": "active",
+      "flagReason": null,
+      "flaggedAt": null,
+      "flaggedBy": null,
+      "deletedAt": null,
+      "organizer": {
+        "id": "uuid",
+        "fullName": "Jane Doe"
+      }
+    }
+  ],
+  "page": 0,
+  "size": 25,
+  "totalElements": 12,
+  "totalPages": 1
+}
+```
+
+> **Notes:** For **flagged** events, `flagReason`, `flaggedAt`, and `flaggedBy` are populated (`flaggedBy` uses the same `{ id, fullName }` shape as the public detail `organizer` block). For **soft deleted** events in grace, `deletedAt` is set and `status` is `soft_deleted`. Virtual/hybrid events include `meetingLink` when present.
 
 ---
 

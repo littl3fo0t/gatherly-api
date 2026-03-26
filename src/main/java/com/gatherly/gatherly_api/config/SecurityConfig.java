@@ -13,11 +13,20 @@ import org.springframework.security.oauth2.server.resource.web.BearerTokenResolv
 import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
 import org.springframework.security.web.SecurityFilterChain;
 
+import java.util.regex.Pattern;
+
 import com.gatherly.gatherly_api.security.RestAccessDeniedHandler;
 import com.gatherly.gatherly_api.security.RestAuthenticationEntryPoint;
 
 @Configuration
 public class SecurityConfig {
+
+    /**
+     * Public {@code GET /api/events/{uuid}} only — excludes paths like {@code /api/events/my} so JWTs are validated there.
+     */
+    private static final Pattern PUBLIC_EVENT_DETAIL_PATH = Pattern.compile(
+            "^/api/events/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    );
 
     /**
      * Reads the Supabase JWT claim (named {@code role}) and converts it into
@@ -76,6 +85,7 @@ public class SecurityConfig {
                         ).permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/categories").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/events").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/events/my").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/events/*").permitAll()
                         .anyRequest().authenticated()
                 )
@@ -99,7 +109,7 @@ public class SecurityConfig {
         return request -> {
             String path = request.getRequestURI();
             String method = request.getMethod();
-            if ("GET".equalsIgnoreCase(method) && path != null && path.matches("^/api/events/[^/]+$")) {
+            if ("GET".equalsIgnoreCase(method) && path != null && PUBLIC_EVENT_DETAIL_PATH.matcher(path).matches()) {
                 return null;
             }
             return delegate.resolve(request);
