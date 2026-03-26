@@ -3,6 +3,7 @@ package com.gatherly.gatherly_api.service;
 import com.gatherly.gatherly_api.dto.CreateEventRequest;
 import com.gatherly.gatherly_api.dto.EventListResponse;
 import com.gatherly.gatherly_api.dto.EventResponse;
+import com.gatherly.gatherly_api.dto.UpdateEventRequest;
 import com.gatherly.gatherly_api.dto.OrganizerEventListResponse;
 import com.gatherly.gatherly_api.model.AdmissionType;
 import com.gatherly.gatherly_api.model.Category;
@@ -41,6 +42,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -51,6 +54,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.http.HttpStatus.BAD_REQUEST;
+import static org.springframework.http.HttpStatus.CONFLICT;
+import static org.springframework.http.HttpStatus.FORBIDDEN;
 import static org.springframework.http.HttpStatus.NOT_FOUND;
 
 @ExtendWith(MockitoExtension.class)
@@ -553,6 +558,207 @@ class EventServiceTest {
         assertEquals(NOT_FOUND, ex.getStatusCode());
     }
 
+    @Test
+    void updateEvent_whenEventMissing_throws404() {
+        when(eventRepository.findById(SAVED_EVENT_ID)).thenReturn(Optional.empty());
+
+        ResponseStatusException ex = assertThrows(
+                ResponseStatusException.class,
+                () -> eventService.updateEvent(ORGANIZER_ID, SAVED_EVENT_ID, validUpdateRequest())
+        );
+        assertEquals(NOT_FOUND, ex.getStatusCode());
+    }
+
+    @Test
+    void updateEvent_whenNotOrganizer_throws403() {
+        UUID otherId = UUID.fromString("00000000-0000-0000-0000-000000000099");
+        Profile otherOrganizer = Profile.builder()
+                .id(otherId)
+                .fullName("Other")
+                .email("other@example.com")
+                .role(Role.user)
+                .avatarUrl(null)
+                .addressLine1(null)
+                .addressLine2(null)
+                .city(null)
+                .province(null)
+                .postalCode(null)
+                .createdAt(OffsetDateTime.parse("2026-01-01T00:00:00Z"))
+                .updatedAt(OffsetDateTime.parse("2026-01-01T00:00:00Z"))
+                .build();
+        Event event = persistedEventWithOrganizer(
+                persistedEvent(eventDraft("Mine", 1, 50), SAVED_EVENT_ID),
+                otherOrganizer
+        );
+        when(eventRepository.findById(SAVED_EVENT_ID)).thenReturn(Optional.of(event));
+
+        ResponseStatusException ex = assertThrows(
+                ResponseStatusException.class,
+                () -> eventService.updateEvent(ORGANIZER_ID, SAVED_EVENT_ID, validUpdateRequest())
+        );
+        assertEquals(FORBIDDEN, ex.getStatusCode());
+    }
+
+    @Test
+    void updateEvent_whenSoftDeleted_throws400() {
+        Event event = persistedEventWithOrganizer(
+                persistedEvent(eventDraft("Mine", 1, 50), SAVED_EVENT_ID),
+                organizer
+        );
+        event.setStatus(EventStatus.soft_deleted);
+        when(eventRepository.findById(SAVED_EVENT_ID)).thenReturn(Optional.of(event));
+
+        ResponseStatusException ex = assertThrows(
+                ResponseStatusException.class,
+                () -> eventService.updateEvent(ORGANIZER_ID, SAVED_EVENT_ID, validUpdateRequest())
+        );
+        assertEquals(BAD_REQUEST, ex.getStatusCode());
+    }
+
+    @Test
+    void updateEvent_whenMaxCapacityDecreases_throws409() {
+        Event event = persistedEventWithOrganizer(
+                persistedEvent(eventDraft("Mine", 1, 50), SAVED_EVENT_ID),
+                organizer
+        );
+        when(eventRepository.findById(SAVED_EVENT_ID)).thenReturn(Optional.of(event));
+
+        UpdateEventRequest req = new UpdateEventRequest(
+                "T",
+                "<p>D</p>",
+                OffsetDateTime.parse("2026-04-01T18:00:00Z"),
+                OffsetDateTime.parse("2026-04-01T21:00:00Z"),
+                "America/Toronto",
+                "123 Main St",
+                null,
+                "Toronto",
+                Province.ON,
+                "M5V 1A1",
+                null,
+                null,
+                40,
+                List.of()
+        );
+
+        ResponseStatusException ex = assertThrows(
+                ResponseStatusException.class,
+                () -> eventService.updateEvent(ORGANIZER_ID, SAVED_EVENT_ID, req)
+        );
+        assertEquals(CONFLICT, ex.getStatusCode());
+    }
+
+    @Test
+    void updateEvent_happyPath_replacesCategoriesAndRefreshes() {
+        Event event = persistedEventWithOrganizer(
+                persistedEvent(eventDraft("Mine", 1, 50), SAVED_EVENT_ID),
+                organizer
+        );
+        when(eventRepository.findById(SAVED_EVENT_ID)).thenReturn(Optional.of(event));
+        doNothing().when(eventCategoryRepository).deleteByEvent_Id(SAVED_EVENT_ID);
+        when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        doNothing().when(entityManager).refresh(any(Event.class));
+
+        EventResponse response = eventService.updateEvent(ORGANIZER_ID, SAVED_EVENT_ID, validUpdateRequest());
+
+        assertEquals("Updated Title", response.title());
+        verify(eventCategoryRepository).deleteByEvent_Id(SAVED_EVENT_ID);
+        verify(entityManager).refresh(any(Event.class));
+    }
+
+    @Test
+    void softDeleteEvent_setsStatusAndDeletedAt() {
+        Event event = persistedEventWithOrganizer(
+                persistedEvent(eventDraft("Mine", 1, 50), SAVED_EVENT_ID),
+                organizer
+        );
+        when(eventRepository.findById(SAVED_EVENT_ID)).thenReturn(Optional.of(event));
+        when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        eventService.softDeleteEvent(ORGANIZER_ID, SAVED_EVENT_ID);
+
+        ArgumentCaptor<Event> captor = ArgumentCaptor.forClass(Event.class);
+        verify(eventRepository).save(captor.capture());
+        assertEquals(EventStatus.soft_deleted, captor.getValue().getStatus());
+        assertNotNull(captor.getValue().getDeletedAt());
+    }
+
+    @Test
+    void restoreEvent_whenNotSoftDeleted_throws400() {
+        Event event = persistedEventWithOrganizer(
+                persistedEvent(eventDraft("Mine", 1, 50), SAVED_EVENT_ID),
+                organizer
+        );
+        when(eventRepository.findById(SAVED_EVENT_ID)).thenReturn(Optional.of(event));
+
+        ResponseStatusException ex = assertThrows(
+                ResponseStatusException.class,
+                () -> eventService.restoreEvent(ORGANIZER_ID, SAVED_EVENT_ID)
+        );
+        assertEquals(BAD_REQUEST, ex.getStatusCode());
+    }
+
+    @Test
+    void restoreEvent_whenGraceExpired_throws404() {
+        Event event = persistedEventWithOrganizer(
+                persistedEvent(eventDraft("Mine", 1, 50), SAVED_EVENT_ID),
+                organizer
+        );
+        event.setStatus(EventStatus.soft_deleted);
+        event.setDeletedAt(OffsetDateTime.now(ZoneOffset.UTC).minusDays(8));
+        when(eventRepository.findById(SAVED_EVENT_ID)).thenReturn(Optional.of(event));
+
+        ResponseStatusException ex = assertThrows(
+                ResponseStatusException.class,
+                () -> eventService.restoreEvent(ORGANIZER_ID, SAVED_EVENT_ID)
+        );
+        assertEquals(NOT_FOUND, ex.getStatusCode());
+    }
+
+    @Test
+    void restoreEvent_whenEndTimeInFuture_setsActive() {
+        Event event = persistedEventWithOrganizer(
+                persistedEvent(eventDraft("Mine", 1, 50), SAVED_EVENT_ID),
+                organizer
+        );
+        event.setStatus(EventStatus.soft_deleted);
+        event.setDeletedAt(OffsetDateTime.now(ZoneOffset.UTC).minusDays(1));
+        event.setStartTime(OffsetDateTime.now(ZoneOffset.UTC).plusDays(1));
+        event.setEndTime(OffsetDateTime.now(ZoneOffset.UTC).plusDays(2));
+        when(eventRepository.findById(SAVED_EVENT_ID)).thenReturn(Optional.of(event));
+        when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        doNothing().when(entityManager).refresh(any(Event.class));
+        when(eventCategoryRepository.findByEvent_Id(SAVED_EVENT_ID)).thenReturn(List.of());
+
+        eventService.restoreEvent(ORGANIZER_ID, SAVED_EVENT_ID);
+
+        ArgumentCaptor<Event> captor = ArgumentCaptor.forClass(Event.class);
+        verify(eventRepository).save(captor.capture());
+        assertEquals(EventStatus.active, captor.getValue().getStatus());
+        assertNull(captor.getValue().getDeletedAt());
+    }
+
+    @Test
+    void restoreEvent_whenEndTimeInPast_setsArchived() {
+        Event event = persistedEventWithOrganizer(
+                persistedEvent(eventDraft("Mine", 1, 50), SAVED_EVENT_ID),
+                organizer
+        );
+        event.setStatus(EventStatus.soft_deleted);
+        event.setDeletedAt(OffsetDateTime.now(ZoneOffset.UTC).minusDays(1));
+        event.setStartTime(OffsetDateTime.now(ZoneOffset.UTC).minusDays(10));
+        event.setEndTime(OffsetDateTime.now(ZoneOffset.UTC).minusDays(1));
+        when(eventRepository.findById(SAVED_EVENT_ID)).thenReturn(Optional.of(event));
+        when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        doNothing().when(entityManager).refresh(any(Event.class));
+        when(eventCategoryRepository.findByEvent_Id(SAVED_EVENT_ID)).thenReturn(List.of());
+
+        eventService.restoreEvent(ORGANIZER_ID, SAVED_EVENT_ID);
+
+        ArgumentCaptor<Event> captor = ArgumentCaptor.forClass(Event.class);
+        verify(eventRepository).save(captor.capture());
+        assertEquals(EventStatus.archived, captor.getValue().getStatus());
+    }
+
     private static CreateEventRequest validInPersonRequest(List<UUID> categoryIds) {
         return new CreateEventRequest(
                 "Spring Meetup",
@@ -572,6 +778,25 @@ class EventServiceTest {
                 null,
                 50,
                 categoryIds
+        );
+    }
+
+    private static UpdateEventRequest validUpdateRequest() {
+        return new UpdateEventRequest(
+                "Updated Title",
+                "<p>D</p>",
+                OffsetDateTime.parse("2026-04-01T18:00:00Z"),
+                OffsetDateTime.parse("2026-04-01T21:00:00Z"),
+                "America/Toronto",
+                "123 Main St",
+                null,
+                "Toronto",
+                Province.ON,
+                "M5V 1A1",
+                null,
+                null,
+                50,
+                List.of()
         );
     }
 

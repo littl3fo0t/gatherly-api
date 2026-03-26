@@ -9,6 +9,7 @@ import com.gatherly.gatherly_api.dto.EventOrganizerResponse;
 import com.gatherly.gatherly_api.dto.EventResponse;
 import com.gatherly.gatherly_api.dto.OrganizerEventItemResponse;
 import com.gatherly.gatherly_api.dto.OrganizerEventListResponse;
+import com.gatherly.gatherly_api.dto.UpdateEventRequest;
 import com.gatherly.gatherly_api.exception.GlobalExceptionHandler;
 import com.gatherly.gatherly_api.model.EventStatus;
 import com.gatherly.gatherly_api.service.EventService;
@@ -20,6 +21,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
@@ -31,8 +33,11 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -177,6 +182,76 @@ class EventControllerTest {
                             size,
                             1,
                             1
+                    );
+                }
+
+                @Override
+                public EventResponse updateEvent(UUID organizerId, UUID eventId, UpdateEventRequest request) {
+                    if ("not-owner".equals(request.title())) {
+                        throw new ResponseStatusException(
+                                HttpStatus.FORBIDDEN,
+                                "You are not the organizer of this event."
+                        );
+                    }
+                    return new EventResponse(
+                            eventId,
+                            request.title(),
+                            request.description(),
+                            "in_person",
+                            "free",
+                            null,
+                            request.startTime(),
+                            request.endTime(),
+                            request.timezone(),
+                            new EventAddressResponse(
+                                    request.addressLine1(),
+                                    request.addressLine2(),
+                                    request.city(),
+                                    request.province() == null ? null : request.province().name(),
+                                    request.postalCode()
+                            ),
+                            request.coverImageUrl(),
+                            0,
+                            request.maxCapacity(),
+                            false,
+                            List.of(),
+                            new EventOrganizerResponse(USER_ID, "Jane Doe")
+                    );
+                }
+
+                @Override
+                public void softDeleteEvent(UUID organizerId, UUID eventId) {
+                    if (!EVENT_ID.equals(eventId)) {
+                        throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Event not found.");
+                    }
+                }
+
+                @Override
+                public EventResponse restoreEvent(UUID organizerId, UUID eventId) {
+                    UUID notSoftDeleted = UUID.fromString("00000000-0000-0000-0000-0000000000ee");
+                    if (notSoftDeleted.equals(eventId)) {
+                        throw new ResponseStatusException(
+                                HttpStatus.BAD_REQUEST,
+                                "Event is not in a soft deleted state."
+                        );
+                    }
+                    return new EventResponse(
+                            eventId,
+                            "Restored",
+                            "<p>R</p>",
+                            "in_person",
+                            "free",
+                            null,
+                            OffsetDateTime.parse("2026-04-01T18:00:00Z"),
+                            OffsetDateTime.parse("2026-04-01T21:00:00Z"),
+                            "America/Toronto",
+                            new EventAddressResponse("1 St", null, "Toronto", "ON", "M5V 1A1"),
+                            null,
+                            0,
+                            50,
+                            false,
+                            List.of(),
+                            new EventOrganizerResponse(USER_ID, "Jane Doe")
                     );
                 }
             };
@@ -455,5 +530,118 @@ class EventControllerTest {
                 .andExpect(jsonPath("$.error").value("Bad Request"))
                 .andExpect(jsonPath("$.message").value("meetingLink is required for virtual and hybrid events."))
                 .andExpect(jsonPath("$.path").value("/api/events"));
+    }
+
+    @Test
+    void putEvent_withoutToken_returns401() throws Exception {
+        String body = """
+                {
+                  "title": "T",
+                  "description": "<p>D</p>",
+                  "startTime": "2026-04-01T18:00:00Z",
+                  "endTime": "2026-04-01T21:00:00Z",
+                  "timezone": "America/Toronto",
+                  "addressLine1": "1 St",
+                  "city": "Toronto",
+                  "province": "ON",
+                  "postalCode": "M5V 1A1",
+                  "maxCapacity": 50,
+                  "categoryIds": []
+                }
+                """;
+        mockMvc.perform(put("/api/events/" + EVENT_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void putEvent_withValidToken_returns200() throws Exception {
+        String body = """
+                {
+                  "title": "Updated",
+                  "description": "<p>D</p>",
+                  "startTime": "2026-04-01T18:00:00Z",
+                  "endTime": "2026-04-01T21:00:00Z",
+                  "timezone": "America/Toronto",
+                  "addressLine1": "1 St",
+                  "city": "Toronto",
+                  "province": "ON",
+                  "postalCode": "M5V 1A1",
+                  "maxCapacity": 50,
+                  "categoryIds": []
+                }
+                """;
+        mockMvc.perform(put("/api/events/" + EVENT_ID)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer user")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("Updated"))
+                .andExpect(jsonPath("$.organizer.id").value(USER_ID.toString()));
+    }
+
+    @Test
+    void putEvent_forbidden_returns403Json() throws Exception {
+        String body = """
+                {
+                  "title": "not-owner",
+                  "description": "<p>D</p>",
+                  "startTime": "2026-04-01T18:00:00Z",
+                  "endTime": "2026-04-01T21:00:00Z",
+                  "timezone": "America/Toronto",
+                  "addressLine1": "1 St",
+                  "city": "Toronto",
+                  "province": "ON",
+                  "postalCode": "M5V 1A1",
+                  "maxCapacity": 50,
+                  "categoryIds": []
+                }
+                """;
+        mockMvc.perform(put("/api/events/" + EVENT_ID)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer user")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value(403))
+                .andExpect(jsonPath("$.message").value("You are not the organizer of this event."));
+    }
+
+    @Test
+    void deleteEvent_withoutToken_returns401() throws Exception {
+        mockMvc.perform(delete("/api/events/" + EVENT_ID))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void deleteEvent_withValidToken_returns204() throws Exception {
+        mockMvc.perform(delete("/api/events/" + EVENT_ID)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer user"))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void patchRestoreEvent_withoutToken_returns401() throws Exception {
+        mockMvc.perform(patch("/api/events/" + EVENT_ID + "/restore"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void patchRestoreEvent_withValidToken_returns200() throws Exception {
+        mockMvc.perform(patch("/api/events/" + EVENT_ID + "/restore")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("Restored"));
+    }
+
+    @Test
+    void patchRestoreEvent_notSoftDeleted_returns400Json() throws Exception {
+        UUID id = UUID.fromString("00000000-0000-0000-0000-0000000000ee");
+        mockMvc.perform(patch("/api/events/" + id + "/restore")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer user")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Event is not in a soft deleted state."));
     }
 }

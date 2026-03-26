@@ -3,6 +3,7 @@ package com.gatherly.gatherly_api.controller;
 import com.gatherly.gatherly_api.dto.CreateEventRequest;
 import com.gatherly.gatherly_api.dto.EventListResponse;
 import com.gatherly.gatherly_api.dto.EventResponse;
+import com.gatherly.gatherly_api.dto.UpdateEventRequest;
 import com.gatherly.gatherly_api.dto.OrganizerEventListResponse;
 import com.gatherly.gatherly_api.model.EventStatus;
 import com.gatherly.gatherly_api.service.EventService;
@@ -24,9 +25,12 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -228,6 +232,88 @@ public class EventController {
         UUID organizerId = readUserIdFromJwt(jwt);
         EventResponse body = eventService.createEvent(organizerId, request);
         return ResponseEntity.status(HttpStatus.CREATED).body(body);
+    }
+
+    @PutMapping("/{id}")
+    @Operation(
+            summary = "Update an event",
+            description = "Updates mutable fields for an event you own. "
+                    + "Admission and event type cannot change. "
+                    + "maxCapacity cannot decrease.",
+            security = @SecurityRequirement(name = "bearerAuth"),
+            responses = {
+                    @ApiResponse(
+                            responseCode = "200",
+                            description = "Event updated.",
+                            content = @Content(
+                                    mediaType = "application/json",
+                                    schema = @Schema(implementation = EventResponse.class)
+                            )
+                    ),
+                    @ApiResponse(responseCode = "400", description = "Validation failed or event is soft deleted."),
+                    @ApiResponse(responseCode = "401", description = "Missing or invalid token."),
+                    @ApiResponse(responseCode = "403", description = "Authenticated user is not the organizer."),
+                    @ApiResponse(responseCode = "404", description = "Event not found."),
+                    @ApiResponse(responseCode = "409", description = "maxCapacity would decrease.")
+            }
+    )
+    public ResponseEntity<EventResponse> updateEvent(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable UUID id,
+            @Valid @RequestBody UpdateEventRequest request
+    ) {
+        UUID organizerId = readUserIdFromJwt(jwt);
+        return ResponseEntity.ok(eventService.updateEvent(organizerId, id, request));
+    }
+
+    @DeleteMapping("/{id}")
+    @Operation(
+            summary = "Soft delete an event",
+            description = "Sets the event to soft_deleted and records deleted_at. Only the organizer may delete.",
+            security = @SecurityRequirement(name = "bearerAuth"),
+            responses = {
+                    @ApiResponse(responseCode = "204", description = "Soft deleted (or already deleted)."),
+                    @ApiResponse(responseCode = "401", description = "Missing or invalid token."),
+                    @ApiResponse(responseCode = "403", description = "Authenticated user is not the organizer."),
+                    @ApiResponse(responseCode = "404", description = "Event not found.")
+            }
+    )
+    public ResponseEntity<Void> softDeleteEvent(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable UUID id
+    ) {
+        UUID organizerId = readUserIdFromJwt(jwt);
+        eventService.softDeleteEvent(organizerId, id);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PatchMapping("/{id}/restore")
+    @Operation(
+            summary = "Restore a soft deleted event",
+            description = "Within the 7-day grace window, clears soft delete and sets status to active or archived "
+                    + "based on whether end time has passed.",
+            security = @SecurityRequirement(name = "bearerAuth"),
+            responses = {
+                    @ApiResponse(
+                            responseCode = "200",
+                            description = "Event restored.",
+                            content = @Content(
+                                    mediaType = "application/json",
+                                    schema = @Schema(implementation = EventResponse.class)
+                            )
+                    ),
+                    @ApiResponse(responseCode = "400", description = "Event is not soft deleted."),
+                    @ApiResponse(responseCode = "401", description = "Missing or invalid token."),
+                    @ApiResponse(responseCode = "403", description = "Authenticated user is not the organizer."),
+                    @ApiResponse(responseCode = "404", description = "Event not found or grace period expired.")
+            }
+    )
+    public ResponseEntity<EventResponse> restoreEvent(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable UUID id
+    ) {
+        UUID organizerId = readUserIdFromJwt(jwt);
+        return ResponseEntity.ok(eventService.restoreEvent(organizerId, id));
     }
 
     /**

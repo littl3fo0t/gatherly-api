@@ -2,6 +2,7 @@ package com.gatherly.gatherly_api.service;
 
 import com.gatherly.gatherly_api.dto.CreateEventRequest;
 import com.gatherly.gatherly_api.dto.EventListItemResponse;
+import com.gatherly.gatherly_api.dto.UpdateEventRequest;
 import com.gatherly.gatherly_api.dto.EventListResponse;
 import com.gatherly.gatherly_api.dto.EventResponse;
 import com.gatherly.gatherly_api.dto.OrganizerEventItemResponse;
@@ -13,6 +14,7 @@ import com.gatherly.gatherly_api.model.EventCategory;
 import com.gatherly.gatherly_api.model.EventStatus;
 import com.gatherly.gatherly_api.model.EventType;
 import com.gatherly.gatherly_api.model.Profile;
+import com.gatherly.gatherly_api.model.Province;
 import com.gatherly.gatherly_api.repository.CategoryRepository;
 import com.gatherly.gatherly_api.repository.EventCategoryRepository;
 import com.gatherly.gatherly_api.repository.EventRepository;
@@ -50,7 +52,7 @@ import java.util.stream.Collectors;
  * a meeting link and an address.” That keeps controllers thin and makes the same logic
  * reusable if you add another entry point later (for example a CLI or batch job).
  * <p>
- * Implements create, public list/detail reads, and the organizer dashboard list.
+ * Implements create, update, soft delete, restore, public list/detail reads, and the organizer dashboard list.
  */
 @Service
 public class EventService {
@@ -130,6 +132,165 @@ public class EventService {
 
         List<String> categoryNames = categories.stream().map(Category::getName).toList();
         return EventResponse.from(saved, categoryNames);
+    }
+
+    /**
+     * Updates an event owned by {@code organizerId}. Immutable columns ({@code event_type}, admission, fee)
+     * stay on the entity; the request only carries fields the API allows to change.
+     * <p>
+     * Order of operations: authorize → reject soft-deleted edits → validate body → write scalar columns →
+     * replace junction rows → flush → refresh so {@code rsvp_count} and timestamps match Postgres.
+     */
+    @Transactional
+    public EventResponse updateEvent(UUID organizerId, UUID eventId, UpdateEventRequest request) {
+        Event event = loadEventForOrganizer(eventId, organizerId);
+        if (event.getStatus() == EventStatus.soft_deleted) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Cannot update a soft-deleted event. Restore it first."
+            );
+        }
+        if (request.maxCapacity() < event.getMaxCapacity()) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "maxCapacity cannot be decreased after event creation."
+            );
+        }
+
+        validateUpdateRequest(request, event.getEventType());
+
+        applyUpdateToEvent(event, request);
+
+        // Replace categories: delete old links first so we never exceed the unique constraint briefly.
+        eventCategoryRepository.deleteByEvent_Id(eventId);
+        eventRepository.flush();
+
+        List<UUID> categoryIds = request.categoryIds() == null ? List.of() : request.categoryIds();
+        List<Category> categories = loadCategoriesInOrder(categoryIds);
+        if (!categories.isEmpty()) {
+            List<EventCategory> links = new ArrayList<>();
+            for (Category category : categories) {
+                links.add(EventCategory.builder()
+                        .event(event)
+                        .category(category)
+                        .build());
+            }
+            eventCategoryRepository.saveAll(links);
+        }
+
+        eventRepository.save(event);
+        eventRepository.flush();
+        entityManager.refresh(event);
+
+        List<String> categoryNames = categories.stream().map(Category::getName).toList();
+        return EventResponse.from(event, categoryNames);
+    }
+
+    /**
+     * Soft-deletes an event: sets status and {@code deleted_at}. Idempotent if already deleted.
+     */
+    @Transactional
+    public void softDeleteEvent(UUID organizerId, UUID eventId) {
+        Event event = loadEventForOrganizer(eventId, organizerId);
+        if (event.getStatus() == EventStatus.soft_deleted) {
+            return;
+        }
+        event.setStatus(EventStatus.soft_deleted);
+        event.setDeletedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        eventRepository.save(event);
+    }
+
+    /**
+     * Undoes a soft delete within the grace window. Computes {@code active} vs {@code archived} from
+     * {@code end_time} vs “now” (UTC). Clears flag columns so the row’s {@link EventStatus} matches the
+     * documented response (no {@code flagged} after restore).
+     */
+    @Transactional
+    public EventResponse restoreEvent(UUID organizerId, UUID eventId) {
+        Event event = loadEventForOrganizer(eventId, organizerId);
+        if (event.getStatus() != EventStatus.soft_deleted) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Event is not in a soft deleted state."
+            );
+        }
+        OffsetDateTime deletedAt = event.getDeletedAt();
+        if (deletedAt == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Event is not in a soft deleted state."
+            );
+        }
+        OffsetDateTime graceCutoff = OffsetDateTime.now(ZoneOffset.UTC).minusDays(SOFT_DELETE_GRACE_DAYS);
+        if (deletedAt.isBefore(graceCutoff)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Event not found.");
+        }
+
+        event.setDeletedAt(null);
+        event.setFlagReason(null);
+        event.setFlaggedBy(null);
+        event.setFlaggedAt(null);
+
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        if (event.getEndTime().isAfter(now)) {
+            event.setStatus(EventStatus.active);
+        } else {
+            event.setStatus(EventStatus.archived);
+        }
+
+        eventRepository.save(event);
+        eventRepository.flush();
+        entityManager.refresh(event);
+
+        List<String> categoryNames = eventCategoryRepository.findByEvent_Id(eventId).stream()
+                .filter(link -> link.getCategory() != null && link.getCategory().getName() != null)
+                .sorted(Comparator.comparing(EventCategory::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(link -> link.getCategory().getName())
+                .toList();
+
+        return EventResponse.from(event, categoryNames);
+    }
+
+    /**
+     * Loads the row and enforces “this JWT user owns the event”: missing id → 404, wrong organizer → 403.
+     */
+    private Event loadEventForOrganizer(UUID eventId, UUID organizerId) {
+        Event event = eventRepository.findById(eventId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Event not found."));
+        if (event.getOrganizer() == null || !event.getOrganizer().getId().equals(organizerId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You are not the organizer of this event.");
+        }
+        return event;
+    }
+
+    private static void applyUpdateToEvent(Event event, UpdateEventRequest request) {
+        event.setTitle(request.title().trim());
+        event.setDescription(request.description().trim());
+        event.setCoverImageUrl(blankToNull(request.coverImageUrl()));
+        event.setMeetingLink(blankToNull(request.meetingLink()));
+        event.setAddressLine1(blankToNull(request.addressLine1()));
+        event.setAddressLine2(blankToNull(request.addressLine2()));
+        event.setCity(blankToNull(request.city()));
+        event.setProvince(request.province());
+        event.setPostalCode(blankToNull(request.postalCode()));
+        event.setTimezone(request.timezone().trim());
+        event.setStartTime(request.startTime());
+        event.setEndTime(request.endTime());
+        event.setMaxCapacity(request.maxCapacity());
+    }
+
+    private void validateUpdateRequest(UpdateEventRequest request, EventType eventType) {
+        validateTimeOrder(request.startTime(), request.endTime());
+        validateCategoryIdList(request.categoryIds());
+        validateEventTypeFields(
+                eventType,
+                request.meetingLink(),
+                request.addressLine1(),
+                request.city(),
+                request.province(),
+                request.postalCode()
+        );
+        validateOptionalUrlStrings(request.meetingLink(), request.coverImageUrl());
     }
 
     /**
@@ -296,32 +457,43 @@ public class EventService {
      * on {@link CreateEventRequest} (for example “end must be after start”).
      */
     private void validateCreateRequest(CreateEventRequest request) {
-        OffsetDateTime start = request.startTime();
-        OffsetDateTime end = request.endTime();
+        validateTimeOrder(request.startTime(), request.endTime());
+        validateCategoryIdList(request.categoryIds());
+        validateAdmissionRules(request);
+        validateEventTypeFields(
+                request.eventType(),
+                request.meetingLink(),
+                request.addressLine1(),
+                request.city(),
+                request.province(),
+                request.postalCode()
+        );
+        validateOptionalUrlStrings(request.meetingLink(), request.coverImageUrl());
+    }
+
+    private static void validateTimeOrder(OffsetDateTime start, OffsetDateTime end) {
         if (!end.isAfter(start)) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "endTime must be after startTime."
             );
         }
+    }
 
-        List<UUID> categoryIds = request.categoryIds() == null ? List.of() : request.categoryIds();
-        if (categoryIds.size() > 3) {
+    private static void validateCategoryIdList(List<UUID> categoryIds) {
+        List<UUID> ids = categoryIds == null ? List.of() : categoryIds;
+        if (ids.size() > 3) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "At most three categories are allowed."
             );
         }
-        if (categoryIds.size() != new HashSet<>(categoryIds).size()) {
+        if (ids.size() != new HashSet<>(ids).size()) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "Duplicate category ids are not allowed."
             );
         }
-
-        validateAdmissionRules(request);
-        validateEventTypeRules(request);
-        validateOptionalUrls(request);
     }
 
     /** Ensures free vs paid rules line up with {@code admission_fee} in the schema. */
@@ -348,12 +520,18 @@ public class EventService {
      * Virtual/hybrid need a link; in-person/hybrid need a Canadian address block.
      * These rules mirror {@code docs/api_endpoints.md} and the database check constraints.
      */
-    private static void validateEventTypeRules(CreateEventRequest request) {
-        EventType type = request.eventType();
+    private static void validateEventTypeFields(
+            EventType type,
+            String meetingLink,
+            String addressLine1,
+            String city,
+            Province province,
+            String postalCode
+    ) {
         boolean needLink = type == EventType.virtual || type == EventType.hybrid;
         boolean needAddress = type == EventType.in_person || type == EventType.hybrid;
 
-        if (needLink && isBlank(request.meetingLink())) {
+        if (needLink && isBlank(meetingLink)) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "meetingLink is required for virtual and hybrid events."
@@ -361,10 +539,10 @@ public class EventService {
         }
 
         if (needAddress) {
-            if (isBlank(request.addressLine1())
-                    || isBlank(request.city())
-                    || request.province() == null
-                    || isBlank(request.postalCode())) {
+            if (isBlank(addressLine1)
+                    || isBlank(city)
+                    || province == null
+                    || isBlank(postalCode)) {
                 throw new ResponseStatusException(
                         HttpStatus.BAD_REQUEST,
                         "addressLine1, city, province, and postalCode are required for in-person and hybrid events."
@@ -374,12 +552,12 @@ public class EventService {
     }
 
     /** When present, meeting and cover URLs must be real http(s) URLs with a host. */
-    private static void validateOptionalUrls(CreateEventRequest request) {
-        if (!isBlank(request.meetingLink())) {
-            requireHttpOrHttpsUrl("meetingLink", request.meetingLink().trim());
+    private static void validateOptionalUrlStrings(String meetingLink, String coverImageUrl) {
+        if (!isBlank(meetingLink)) {
+            requireHttpOrHttpsUrl("meetingLink", meetingLink.trim());
         }
-        if (!isBlank(request.coverImageUrl())) {
-            requireHttpOrHttpsUrl("coverImageUrl", request.coverImageUrl().trim());
+        if (!isBlank(coverImageUrl)) {
+            requireHttpOrHttpsUrl("coverImageUrl", coverImageUrl.trim());
         }
     }
 
