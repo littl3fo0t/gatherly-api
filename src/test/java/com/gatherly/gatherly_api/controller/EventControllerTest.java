@@ -7,6 +7,10 @@ import com.gatherly.gatherly_api.dto.EventListItemResponse;
 import com.gatherly.gatherly_api.dto.EventListResponse;
 import com.gatherly.gatherly_api.dto.EventOrganizerResponse;
 import com.gatherly.gatherly_api.dto.EventResponse;
+import com.gatherly.gatherly_api.dto.OrganizerEventItemResponse;
+import com.gatherly.gatherly_api.dto.OrganizerEventListResponse;
+import com.gatherly.gatherly_api.exception.GlobalExceptionHandler;
+import com.gatherly.gatherly_api.model.EventStatus;
 import com.gatherly.gatherly_api.service.EventService;
 
 import org.junit.jupiter.api.Test;
@@ -34,7 +38,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(EventController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, GlobalExceptionHandler.class})
 class EventControllerTest {
 
     private static final UUID USER_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
@@ -136,6 +140,45 @@ class EventControllerTest {
                             new EventOrganizerResponse(USER_ID, "Jane Doe")
                     );
                 }
+
+                @Override
+                public OrganizerEventListResponse getMyEvents(
+                        UUID organizerId,
+                        EventStatus statusFilter,
+                        int page,
+                        int size
+                ) {
+                    return new OrganizerEventListResponse(
+                            List.of(new OrganizerEventItemResponse(
+                                    EVENT_ID,
+                                    "My Dashboard Event",
+                                    "<p>D</p>",
+                                    "in_person",
+                                    "free",
+                                    null,
+                                    null,
+                                    OffsetDateTime.parse("2026-04-01T18:00:00Z"),
+                                    OffsetDateTime.parse("2026-04-01T21:00:00Z"),
+                                    "America/Toronto",
+                                    new EventAddressResponse("1 St", null, "Toronto", "ON", "M5V 1A1"),
+                                    null,
+                                    0,
+                                    50,
+                                    false,
+                                    List.of("Tech"),
+                                    EventStatus.active.name(),
+                                    null,
+                                    null,
+                                    null,
+                                    null,
+                                    new EventOrganizerResponse(USER_ID, "Jane Doe")
+                            )),
+                            page,
+                            size,
+                            1,
+                            1
+                    );
+                }
             };
         }
 
@@ -217,6 +260,44 @@ class EventControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.page").value(2))
                 .andExpect(jsonPath("$.size").value(10));
+    }
+
+    @Test
+    void getMyEvents_withoutToken_returns401() throws Exception {
+        mockMvc.perform(get("/api/events/my"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void getMyEvents_withValidToken_returns200() throws Exception {
+        mockMvc.perform(get("/api/events/my")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].id").value(EVENT_ID.toString()))
+                .andExpect(jsonPath("$.content[0].title").value("My Dashboard Event"))
+                .andExpect(jsonPath("$.content[0].status").value("active"))
+                .andExpect(jsonPath("$.content[0].organizer.id").value(USER_ID.toString()))
+                .andExpect(jsonPath("$.totalElements").value(1));
+    }
+
+    @Test
+    void getMyEvents_withStatusQuery_returns200() throws Exception {
+        mockMvc.perform(get("/api/events/my?status=flagged&page=1&size=10")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer user"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.page").value(1))
+                .andExpect(jsonPath("$.size").value(10));
+    }
+
+    @Test
+    void getMyEvents_invalidStatus_returns400Json() throws Exception {
+        mockMvc.perform(get("/api/events/my?status=not_a_status")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer user")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.message").value("Invalid status filter."));
     }
 
     @Test

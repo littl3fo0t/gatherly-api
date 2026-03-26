@@ -3,6 +3,8 @@ package com.gatherly.gatherly_api.controller;
 import com.gatherly.gatherly_api.dto.CreateEventRequest;
 import com.gatherly.gatherly_api.dto.EventListResponse;
 import com.gatherly.gatherly_api.dto.EventResponse;
+import com.gatherly.gatherly_api.dto.OrganizerEventListResponse;
+import com.gatherly.gatherly_api.model.EventStatus;
 import com.gatherly.gatherly_api.service.EventService;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -76,6 +78,46 @@ public class EventController {
             @RequestParam(defaultValue = "25") int size
     ) {
         return ResponseEntity.ok(eventService.getEvents(page, size));
+    }
+
+    @GetMapping("/my")
+    @Operation(
+            summary = "List my events (organizer dashboard)",
+            description = "All events you created that are not purged (active, archived, flagged, "
+                    + "soft-deleted within the 7-day grace window). Optional status filter. "
+                    + "Sorted by start time, newest first.",
+            security = @SecurityRequirement(name = "bearerAuth"),
+            responses = {
+                    @ApiResponse(
+                            responseCode = "200",
+                            description = "Page of your events.",
+                            content = @Content(
+                                    mediaType = "application/json",
+                                    schema = @Schema(implementation = OrganizerEventListResponse.class)
+                            )
+                    ),
+                    @ApiResponse(
+                            responseCode = "400",
+                            description = "Invalid `status` query value."
+                    ),
+                    @ApiResponse(
+                            responseCode = "401",
+                            description = "Missing or invalid token."
+                    )
+            }
+    )
+    public ResponseEntity<OrganizerEventListResponse> getMyEvents(
+            @AuthenticationPrincipal Jwt jwt,
+            @Parameter(description = "Filter: active, archived, flagged, soft_deleted. Omit for all.")
+            @RequestParam(required = false) String status,
+            @Parameter(description = "Zero-based page index. Defaults to 0.")
+            @RequestParam(defaultValue = "0") int page,
+            @Parameter(description = "Page size. Defaults to 25.")
+            @RequestParam(defaultValue = "25") int size
+    ) {
+        UUID organizerId = readUserIdFromJwt(jwt);
+        EventStatus statusFilter = parseOptionalStatusFilter(status);
+        return ResponseEntity.ok(eventService.getMyEvents(organizerId, statusFilter, page, size));
     }
 
     @GetMapping("/{id}")
@@ -199,6 +241,20 @@ public class EventController {
             return UUID.fromString(jwt.getSubject());
         } catch (IllegalArgumentException exception) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid user subject in token.");
+        }
+    }
+
+    /**
+     * Optional {@code status} for GET /my; must match {@link EventStatus} enum names (e.g. {@code soft_deleted}).
+     */
+    private static EventStatus parseOptionalStatusFilter(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return EventStatus.valueOf(raw.trim());
+        } catch (IllegalArgumentException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid status filter.");
         }
     }
 
