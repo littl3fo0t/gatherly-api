@@ -18,7 +18,7 @@ A full stack community event platform where users can discover local events, cre
  - TipTap (rich text editing)
 
 ### Deployment:
- - Render (API & database)
+ - Railway (API & database)
  - Vercel (frontend)
 
 ## Basic Workflow (WIP)
