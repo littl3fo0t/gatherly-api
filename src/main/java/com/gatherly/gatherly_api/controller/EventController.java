@@ -4,12 +4,14 @@ import com.gatherly.gatherly_api.dto.CreateEventRequest;
 import com.gatherly.gatherly_api.dto.FlagEventRequest;
 import com.gatherly.gatherly_api.dto.EventListResponse;
 import com.gatherly.gatherly_api.dto.EventResponse;
+import com.gatherly.gatherly_api.dto.RsvpResponse;
 import com.gatherly.gatherly_api.dto.UpdateEventRequest;
 import com.gatherly.gatherly_api.dto.OrganizerEventListResponse;
 import com.gatherly.gatherly_api.dto.OrganizerEventItemResponse;
 import com.gatherly.gatherly_api.model.Role;
 import com.gatherly.gatherly_api.model.EventStatus;
 import com.gatherly.gatherly_api.service.EventService;
+import com.gatherly.gatherly_api.service.RsvpService;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -56,10 +58,12 @@ import java.util.UUID;
 public class EventController {
 
     private final EventService eventService;
+    private final RsvpService rsvpService;
     private final JwtDecoder jwtDecoder;
 
-    public EventController(EventService eventService, JwtDecoder jwtDecoder) {
+    public EventController(EventService eventService, RsvpService rsvpService, JwtDecoder jwtDecoder) {
         this.eventService = eventService;
+        this.rsvpService = rsvpService;
         this.jwtDecoder = jwtDecoder;
     }
 
@@ -236,6 +240,63 @@ public class EventController {
         UUID organizerId = readUserIdFromJwt(jwt);
         EventResponse body = eventService.createEvent(organizerId, request);
         return ResponseEntity.status(HttpStatus.CREATED).body(body);
+    }
+
+    @PostMapping("/{id}/rsvp")
+    @Operation(
+            summary = "RSVP to an event",
+            description = "Creates a confirmed RSVP for the authenticated user on the specified event.",
+            security = @SecurityRequirement(name = "bearerAuth"),
+            responses = {
+                    @ApiResponse(
+                            responseCode = "201",
+                            description = "RSVP confirmed.",
+                            content = @Content(
+                                    mediaType = "application/json",
+                                    schema = @Schema(implementation = RsvpResponse.class)
+                            )
+                    ),
+                    @ApiResponse(responseCode = "400", description = "Event start time has already passed — admissions closed."),
+                    @ApiResponse(responseCode = "401", description = "Missing or invalid token."),
+                    @ApiResponse(responseCode = "404", description = "Event not found or not active."),
+                    @ApiResponse(responseCode = "409", description = "User has already RSVPed for this event."),
+                    @ApiResponse(responseCode = "422", description = "Event is at maximum capacity.")
+            }
+    )
+    public ResponseEntity<RsvpResponse> createRsvp(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable UUID id
+    ) {
+        UUID userId = readUserIdFromJwt(jwt);
+        RsvpResponse body = rsvpService.createRsvp(userId, id);
+        return ResponseEntity.status(HttpStatus.CREATED).body(body);
+    }
+
+    @PatchMapping("/{id}/rsvp/cancel")
+    @Operation(
+            summary = "Cancel my RSVP",
+            description = "Cancels the authenticated user's RSVP for the specified event.",
+            security = @SecurityRequirement(name = "bearerAuth"),
+            responses = {
+                    @ApiResponse(
+                            responseCode = "200",
+                            description = "RSVP cancelled successfully.",
+                            content = @Content(
+                                    mediaType = "application/json",
+                                    schema = @Schema(implementation = RsvpResponse.class)
+                            )
+                    ),
+                    @ApiResponse(responseCode = "400", description = "Event start time has already passed."),
+                    @ApiResponse(responseCode = "401", description = "Missing or invalid token."),
+                    @ApiResponse(responseCode = "404", description = "No active RSVP found for this user and event.")
+            }
+    )
+    public ResponseEntity<RsvpResponse> cancelRsvp(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable UUID id
+    ) {
+        UUID userId = readUserIdFromJwt(jwt);
+        return ResponseEntity.ok(rsvpService.cancelRsvp(userId, id));
     }
 
     @PutMapping("/{id}")

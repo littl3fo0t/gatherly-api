@@ -7,6 +7,7 @@ import com.gatherly.gatherly_api.dto.EventListItemResponse;
 import com.gatherly.gatherly_api.dto.EventListResponse;
 import com.gatherly.gatherly_api.dto.EventOrganizerResponse;
 import com.gatherly.gatherly_api.dto.EventResponse;
+import com.gatherly.gatherly_api.dto.RsvpResponse;
 import com.gatherly.gatherly_api.dto.OrganizerEventItemResponse;
 import com.gatherly.gatherly_api.dto.OrganizerEventListResponse;
 import com.gatherly.gatherly_api.dto.UpdateEventRequest;
@@ -14,6 +15,7 @@ import com.gatherly.gatherly_api.exception.GlobalExceptionHandler;
 import com.gatherly.gatherly_api.model.EventStatus;
 import com.gatherly.gatherly_api.model.Role;
 import com.gatherly.gatherly_api.service.EventService;
+import com.gatherly.gatherly_api.service.RsvpService;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,6 +54,11 @@ class EventControllerTest {
     private static final UUID EVENT_ID_NOT_FOUND = UUID.fromString("00000000-0000-0000-0000-0000000000cc");
     private static final UUID EVENT_ID_ALREADY_FLAGGED = UUID.fromString("00000000-0000-0000-0000-0000000000dd");
     private static final UUID EVENT_ID_SOFT_DELETED = UUID.fromString("00000000-0000-0000-0000-0000000000ee");
+    private static final UUID EVENT_ID_ALREADY_RSVPED = UUID.fromString("00000000-0000-0000-0000-0000000000a1");
+    private static final UUID EVENT_ID_AT_CAPACITY = UUID.fromString("00000000-0000-0000-0000-0000000000a2");
+    private static final UUID EVENT_ID_ADMISSIONS_CLOSED = UUID.fromString("00000000-0000-0000-0000-0000000000a3");
+    private static final UUID EVENT_ID_NO_ACTIVE_RSVP = UUID.fromString("00000000-0000-0000-0000-0000000000a4");
+    private static final UUID RSVP_ID = UUID.fromString("00000000-0000-0000-0000-0000000000b1");
 
     @Autowired
     private MockMvc mockMvc;
@@ -316,6 +323,68 @@ class EventControllerTest {
                             new EventOrganizerResponse(actorId, "Jane Doe"),
                             null,
                             new EventOrganizerResponse(USER_ID, "Jane Doe")
+                    );
+                }
+            };
+        }
+
+        @Bean
+        RsvpService rsvpService() {
+            return new RsvpService(null, null, null, null) {
+                @Override
+                public RsvpResponse createRsvp(UUID userId, UUID eventId) {
+                    if (EVENT_ID_NOT_FOUND.equals(eventId) || EVENT_ID_SOFT_DELETED.equals(eventId)) {
+                        throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Event not found.");
+                    }
+                    if (EVENT_ID_ALREADY_RSVPED.equals(eventId)) {
+                        throw new ResponseStatusException(HttpStatus.CONFLICT, "User has already RSVPed for this event.");
+                    }
+                    if (EVENT_ID_ADMISSIONS_CLOSED.equals(eventId)) {
+                        throw new ResponseStatusException(
+                                HttpStatus.BAD_REQUEST,
+                                "Event start time has already passed — admissions closed."
+                        );
+                    }
+                    if (EVENT_ID_AT_CAPACITY.equals(eventId)) {
+                        throw new ResponseStatusException(
+                                org.springframework.http.HttpStatusCode.valueOf(422),
+                                "Event is at maximum capacity."
+                        );
+                    }
+                    return new RsvpResponse(
+                            RSVP_ID,
+                            eventId,
+                            userId,
+                            "confirmed",
+                            OffsetDateTime.parse("2026-03-31T10:00:00Z"),
+                            OffsetDateTime.parse("2026-03-31T10:00:00Z")
+                    );
+                }
+
+                @Override
+                public RsvpResponse cancelRsvp(UUID userId, UUID eventId) {
+                    if (EVENT_ID_NOT_FOUND.equals(eventId) || EVENT_ID_SOFT_DELETED.equals(eventId)) {
+                        throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Event not found.");
+                    }
+                    if (EVENT_ID_ADMISSIONS_CLOSED.equals(eventId)) {
+                        throw new ResponseStatusException(
+                                HttpStatus.BAD_REQUEST,
+                                "Event start time has already passed — admissions closed."
+                        );
+                    }
+                    if (EVENT_ID_NO_ACTIVE_RSVP.equals(eventId)) {
+                        throw new ResponseStatusException(
+                                HttpStatus.NOT_FOUND,
+                                "No active RSVP found for this user and event."
+                        );
+                    }
+                    return new RsvpResponse(
+                            RSVP_ID,
+                            eventId,
+                            userId,
+                            "cancelled",
+                            OffsetDateTime.parse("2026-03-31T10:00:00Z"),
+                            OffsetDateTime.parse("2026-03-31T10:05:00Z")
                     );
                 }
             };
@@ -827,5 +896,65 @@ class EventControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.status").value(400))
                 .andExpect(jsonPath("$.message").value("Cannot flag a soft-deleted event."));
+    }
+
+    @Test
+    void postRsvp_withValidToken_returns201() throws Exception {
+        mockMvc.perform(post("/api/events/" + EVENT_ID + "/rsvp")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer user")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(RSVP_ID.toString()))
+                .andExpect(jsonPath("$.eventId").value(EVENT_ID.toString()))
+                .andExpect(jsonPath("$.userId").value(USER_ID.toString()))
+                .andExpect(jsonPath("$.status").value("confirmed"))
+                .andExpect(jsonPath("$.createdAt").value("2026-03-31T10:00:00Z"))
+                .andExpect(jsonPath("$.updatedAt").value("2026-03-31T10:00:00Z"));
+    }
+
+    @Test
+    void postRsvp_missingToken_returns401() throws Exception {
+        mockMvc.perform(post("/api/events/" + EVENT_ID + "/rsvp"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void postRsvp_alreadyRsvped_returns409Json() throws Exception {
+        mockMvc.perform(post("/api/events/" + EVENT_ID_ALREADY_RSVPED + "/rsvp")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer user")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.status").value(409))
+                .andExpect(jsonPath("$.message").value("User has already RSVPed for this event."));
+    }
+
+    @Test
+    void postRsvp_atCapacity_returns422Json() throws Exception {
+        mockMvc.perform(post("/api/events/" + EVENT_ID_AT_CAPACITY + "/rsvp")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer user")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().is(422))
+                .andExpect(jsonPath("$.status").value(422))
+                .andExpect(jsonPath("$.message").value("Event is at maximum capacity."));
+    }
+
+    @Test
+    void patchCancelRsvp_withValidToken_returns200() throws Exception {
+        mockMvc.perform(patch("/api/events/" + EVENT_ID + "/rsvp/cancel")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer user")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("cancelled"))
+                .andExpect(jsonPath("$.updatedAt").value("2026-03-31T10:05:00Z"));
+    }
+
+    @Test
+    void patchCancelRsvp_noActiveRsvp_returns404Json() throws Exception {
+        mockMvc.perform(patch("/api/events/" + EVENT_ID_NO_ACTIVE_RSVP + "/rsvp/cancel")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer user")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.message").value("No active RSVP found for this user and event."));
     }
 }
