@@ -13,6 +13,7 @@ import org.springframework.security.oauth2.server.resource.web.BearerTokenResolv
 import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
 import org.springframework.security.web.SecurityFilterChain;
 
+import java.util.Map;
 import java.util.regex.Pattern;
 
 import com.gatherly.gatherly_api.security.RestAccessDeniedHandler;
@@ -29,17 +30,22 @@ public class SecurityConfig {
     );
 
     /**
-     * Reads the Supabase JWT claim (named {@code role}) and converts it into
-     * Spring Security authorities.
+     * Resolves application role from the JWT.
      *
-     * Spring Security expects authorities like {@code ROLE_ADMIN}, so we take the
-     * JWT's `role` value and turn it into {@code ROLE_} + uppercase role.
+     * Supabase sets top-level {@code role} to {@code authenticated}/{@code anon}.
+     * The app role (user|moderator|admin) is added by {@code custom_access_token_hook}
+     * under {@code app_metadata.role}.
+     *
+     * For backwards compatibility with older tokens/tests, we also fall back to
+     * {@code user_metadata.role} and then top-level {@code role} (excluding
+     * {@code authenticated}/{@code anon}).
+     * Test tokens may set top-level {@code role} directly.
      */
     @Bean
     public JwtAuthenticationConverter jwtAuthenticationConverter() {
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
         converter.setJwtGrantedAuthoritiesConverter(jwt -> {
-            String role = jwt.getClaimAsString("role");
+            String role = applicationRoleFromJwt(jwt);
             if (role == null || role.isBlank()) {
                 return java.util.List.<GrantedAuthority>of();
             }
@@ -49,6 +55,33 @@ public class SecurityConfig {
             );
         });
         return converter;
+    }
+
+    private static String applicationRoleFromJwt(org.springframework.security.oauth2.jwt.Jwt jwt) {
+        Map<String, Object> appMetadata = jwt.getClaim("app_metadata");
+        if (appMetadata != null) {
+            Object r = appMetadata.get("role");
+            if (r instanceof String s && !s.isBlank()) {
+                return s;
+            }
+        }
+
+        Map<String, Object> userMetadata = jwt.getClaim("user_metadata");
+        if (userMetadata != null) {
+            Object r = userMetadata.get("role");
+            if (r instanceof String s && !s.isBlank()) {
+                return s;
+            }
+        }
+
+        String top = jwt.getClaimAsString("role");
+        if (top == null || top.isBlank()) {
+            return null;
+        }
+        if ("authenticated".equalsIgnoreCase(top) || "anon".equalsIgnoreCase(top)) {
+            return null;
+        }
+        return top;
     }
 
     @Bean
