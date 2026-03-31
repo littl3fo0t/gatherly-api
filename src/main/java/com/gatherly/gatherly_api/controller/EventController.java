@@ -1,10 +1,13 @@
 package com.gatherly.gatherly_api.controller;
 
 import com.gatherly.gatherly_api.dto.CreateEventRequest;
+import com.gatherly.gatherly_api.dto.FlagEventRequest;
 import com.gatherly.gatherly_api.dto.EventListResponse;
 import com.gatherly.gatherly_api.dto.EventResponse;
 import com.gatherly.gatherly_api.dto.UpdateEventRequest;
 import com.gatherly.gatherly_api.dto.OrganizerEventListResponse;
+import com.gatherly.gatherly_api.dto.OrganizerEventItemResponse;
+import com.gatherly.gatherly_api.model.Role;
 import com.gatherly.gatherly_api.model.EventStatus;
 import com.gatherly.gatherly_api.service.EventService;
 
@@ -38,6 +41,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -314,6 +318,88 @@ public class EventController {
     ) {
         UUID organizerId = readUserIdFromJwt(jwt);
         return ResponseEntity.ok(eventService.restoreEvent(organizerId, id));
+    }
+
+    @PatchMapping("/{id}/flag")
+    @Operation(
+            summary = "Flag an event",
+            description = "Flags an event as inappropriate. Restricted to moderator/admin roles only.",
+            security = @SecurityRequirement(name = "bearerAuth"),
+            responses = {
+                    @ApiResponse(
+                            responseCode = "200",
+                            description = "Event flagged successfully.",
+                            content = @Content(
+                                    mediaType = "application/json",
+                                    schema = @Schema(implementation = OrganizerEventItemResponse.class)
+                            )
+                    ),
+                    @ApiResponse(responseCode = "400", description = "Missing or invalid flag reason."),
+                    @ApiResponse(responseCode = "401", description = "Missing or invalid token."),
+                    @ApiResponse(responseCode = "403", description = "Authenticated user does not have moderator or admin role."),
+                    @ApiResponse(responseCode = "404", description = "Event not found."),
+                    @ApiResponse(responseCode = "409", description = "Event is already flagged.")
+            }
+    )
+    public ResponseEntity<OrganizerEventItemResponse> flagEvent(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable UUID id,
+            @RequestBody FlagEventRequest request
+    ) {
+        UUID actorId = readUserIdFromJwt(jwt);
+        Role actorRole = parseUserRoleFromJwt(jwt);
+        if (actorRole == null || (actorRole != Role.moderator && actorRole != Role.admin)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+        return ResponseEntity.ok(eventService.flagEvent(actorId, actorRole, id, request == null ? null : request.reason()));
+    }
+
+    /**
+     * Reads the application role from the JWT.
+     *
+     * <p>We mimic {@code SecurityConfig} for consistency:
+     * check app_metadata.role → user_metadata.role → top-level role (excluding "authenticated"/"anon").
+     */
+    private static Role parseUserRoleFromJwt(Jwt jwt) {
+        if (jwt == null) {
+            return null;
+        }
+
+        Object appMetadataClaim = jwt.getClaim("app_metadata");
+        if (appMetadataClaim instanceof Map<?, ?> appMetadataMap) {
+            Object r = appMetadataMap.get("role");
+            if (r instanceof String s && !s.isBlank()) {
+                return toRole(s);
+            }
+        }
+
+        Object userMetadataClaim = jwt.getClaim("user_metadata");
+        if (userMetadataClaim instanceof Map<?, ?> userMetadataMap) {
+            Object r = userMetadataMap.get("role");
+            if (r instanceof String s && !s.isBlank()) {
+                return toRole(s);
+            }
+        }
+
+        String top = jwt.getClaimAsString("role");
+        if (top == null || top.isBlank()
+                || "authenticated".equalsIgnoreCase(top)
+                || "anon".equalsIgnoreCase(top)) {
+            return null;
+        }
+        return toRole(top);
+    }
+
+    private static Role toRole(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String normalized = raw.trim().toLowerCase();
+        try {
+            return Role.valueOf(normalized);
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
     }
 
     /**

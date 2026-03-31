@@ -11,8 +11,10 @@ import com.gatherly.gatherly_api.model.AdmissionType;
 import com.gatherly.gatherly_api.model.Category;
 import com.gatherly.gatherly_api.model.Event;
 import com.gatherly.gatherly_api.model.EventCategory;
+import com.gatherly.gatherly_api.model.FlagReason;
 import com.gatherly.gatherly_api.model.EventStatus;
 import com.gatherly.gatherly_api.model.EventType;
+import com.gatherly.gatherly_api.model.Role;
 import com.gatherly.gatherly_api.model.Profile;
 import com.gatherly.gatherly_api.model.Province;
 import com.gatherly.gatherly_api.repository.CategoryRepository;
@@ -249,6 +251,90 @@ public class EventService {
                 .toList();
 
         return EventResponse.from(event, categoryNames);
+    }
+
+    /**
+     * Flags an event with a moderator/admin-provided reason.
+     * <p>
+     * Business rules:
+     * <ul>
+     *   <li>Only {@link Role#moderator} and {@link Role#admin} may flag.</li>
+     *   <li>Flag reason is mandatory and must match the DB {@code flag_reason} enum.</li>
+     *   <li>Soft-deleted events are rejected (can only be restored by the organizer).</li>
+     *   <li>Already-flagged events are rejected with a 409 Conflict.</li>
+     * </ul>
+     */
+    @Transactional
+    public OrganizerEventItemResponse flagEvent(
+            UUID actorId,
+            Role actorRole,
+            UUID eventId,
+            String reason
+    ) {
+        if (actorRole != Role.moderator && actorRole != Role.admin) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+        }
+
+        Event event = eventRepository.findById(eventId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Event not found."
+                ));
+
+        if (event.getStatus() == EventStatus.soft_deleted) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Cannot flag a soft-deleted event."
+            );
+        }
+        if (event.getStatus() == EventStatus.flagged) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Event is already flagged."
+            );
+        }
+
+        FlagReason parsedReason = parseFlagReason(reason);
+
+        Profile flaggedBy = profileRepository.findById(actorId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Profile not found for authenticated user."
+                ));
+
+        event.setStatus(EventStatus.flagged);
+        event.setFlagReason(parsedReason);
+        event.setFlaggedBy(flaggedBy);
+        event.setFlaggedAt(OffsetDateTime.now(ZoneOffset.UTC));
+
+        eventRepository.save(event);
+        eventRepository.flush();
+        entityManager.refresh(event);
+
+        List<String> categoryNames = sortedCategoryNamesForEvent(
+                eventCategoryRepository.findByEvent_Id(eventId)
+        );
+
+        return OrganizerEventItemResponse.from(event, categoryNames);
+    }
+
+    private static FlagReason parseFlagReason(String rawReason) {
+        if (isBlank(rawReason)) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Missing or invalid flag reason."
+            );
+        }
+
+        String normalized = rawReason.trim().toLowerCase();
+        try {
+            return FlagReason.valueOf(normalized);
+        } catch (IllegalArgumentException ex) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Missing or invalid flag reason."
+            );
+        }
     }
 
     /**

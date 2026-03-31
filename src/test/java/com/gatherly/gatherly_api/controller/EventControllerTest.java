@@ -12,6 +12,7 @@ import com.gatherly.gatherly_api.dto.OrganizerEventListResponse;
 import com.gatherly.gatherly_api.dto.UpdateEventRequest;
 import com.gatherly.gatherly_api.exception.GlobalExceptionHandler;
 import com.gatherly.gatherly_api.model.EventStatus;
+import com.gatherly.gatherly_api.model.Role;
 import com.gatherly.gatherly_api.service.EventService;
 
 import org.junit.jupiter.api.Test;
@@ -48,6 +49,9 @@ class EventControllerTest {
 
     private static final UUID USER_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
     private static final UUID EVENT_ID = UUID.fromString("00000000-0000-0000-0000-0000000000bb");
+    private static final UUID EVENT_ID_NOT_FOUND = UUID.fromString("00000000-0000-0000-0000-0000000000cc");
+    private static final UUID EVENT_ID_ALREADY_FLAGGED = UUID.fromString("00000000-0000-0000-0000-0000000000dd");
+    private static final UUID EVENT_ID_SOFT_DELETED = UUID.fromString("00000000-0000-0000-0000-0000000000ee");
 
     @Autowired
     private MockMvc mockMvc;
@@ -254,6 +258,66 @@ class EventControllerTest {
                             new EventOrganizerResponse(USER_ID, "Jane Doe")
                     );
                 }
+
+                @Override
+                public OrganizerEventItemResponse flagEvent(
+                        UUID actorId,
+                        Role actorRole,
+                        UUID eventId,
+                        String reason
+                ) {
+                    if (EVENT_ID_NOT_FOUND.equals(eventId)) {
+                        throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Event not found.");
+                    }
+                    if (EVENT_ID_SOFT_DELETED.equals(eventId)) {
+                        throw new ResponseStatusException(
+                                HttpStatus.BAD_REQUEST,
+                                "Cannot flag a soft-deleted event."
+                        );
+                    }
+                    if (EVENT_ID_ALREADY_FLAGGED.equals(eventId)) {
+                        throw new ResponseStatusException(
+                                HttpStatus.CONFLICT,
+                                "Event is already flagged."
+                        );
+                    }
+
+                    String normalized = reason == null ? null : reason.trim().toLowerCase();
+                    boolean valid = normalized != null && List.of(
+                            "off_topic", "nsfw", "spam", "misleading", "other"
+                    ).contains(normalized);
+                    if (!valid) {
+                        throw new ResponseStatusException(
+                                HttpStatus.BAD_REQUEST,
+                                "Missing or invalid flag reason."
+                        );
+                    }
+
+                    return new OrganizerEventItemResponse(
+                            eventId,
+                            "Flagged Event",
+                            "<p>F</p>",
+                            "in_person",
+                            "free",
+                            null,
+                            null,
+                            OffsetDateTime.parse("2026-04-01T18:00:00Z"),
+                            OffsetDateTime.parse("2026-04-01T21:00:00Z"),
+                            "America/Toronto",
+                            new EventAddressResponse("1 St", null, "Toronto", "ON", "M5V 1A1"),
+                            null,
+                            0,
+                            50,
+                            false,
+                            List.of("Tech"),
+                            "flagged",
+                            normalized,
+                            OffsetDateTime.parse("2026-04-01T18:00:00Z"),
+                            new EventOrganizerResponse(actorId, "Jane Doe"),
+                            null,
+                            new EventOrganizerResponse(USER_ID, "Jane Doe")
+                    );
+                }
             };
         }
 
@@ -268,10 +332,14 @@ class EventControllerTest {
                 }
 
                 Instant now = Instant.now();
+                String role = switch (tokenValue) {
+                    case "moderator", "admin", "user" -> tokenValue;
+                    default -> "user";
+                };
                 return Jwt.withTokenValue(tokenValue)
                         .header("alg", "RS256")
                         .subject(USER_ID.toString())
-                        .claim("role", "user")
+                        .claim("role", role)
                         .issuedAt(now)
                         .expiresAt(now.plusSeconds(3600))
                         .build();
@@ -643,5 +711,121 @@ class EventControllerTest {
                         .accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("Event is not in a soft deleted state."));
+    }
+
+    @Test
+    void patchFlag_withoutToken_returns401() throws Exception {
+        String body = """
+                {
+                  "reason": "off_topic"
+                }
+                """;
+        mockMvc.perform(patch("/api/events/" + EVENT_ID + "/flag")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void patchFlag_userRole_returns403Json() throws Exception {
+        String body = """
+                {
+                  "reason": "off_topic"
+                }
+                """;
+        mockMvc.perform(patch("/api/events/" + EVENT_ID + "/flag")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer user")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value(403))
+                .andExpect(jsonPath("$.message").value("Forbidden"));
+    }
+
+    @Test
+    void patchFlag_moderatorRole_returns200() throws Exception {
+        String body = """
+                {
+                  "reason": "off_topic"
+                }
+                """;
+        mockMvc.perform(patch("/api/events/" + EVENT_ID + "/flag")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer moderator")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("flagged"))
+                .andExpect(jsonPath("$.flagReason").value("off_topic"))
+                .andExpect(jsonPath("$.flaggedBy.id").value(USER_ID.toString()));
+    }
+
+    @Test
+    void patchFlag_invalidReason_returns400Json() throws Exception {
+        String body = """
+                {
+                  "reason": "not_a_real_reason"
+                }
+                """;
+        mockMvc.perform(patch("/api/events/" + EVENT_ID + "/flag")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer moderator")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.message").value("Missing or invalid flag reason."));
+    }
+
+    @Test
+    void patchFlag_eventAlreadyFlagged_returns409Json() throws Exception {
+        String body = """
+                {
+                  "reason": "off_topic"
+                }
+                """;
+        mockMvc.perform(patch("/api/events/" + EVENT_ID_ALREADY_FLAGGED + "/flag")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer moderator")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.status").value(409))
+                .andExpect(jsonPath("$.message").value("Event is already flagged."));
+    }
+
+    @Test
+    void patchFlag_eventNotFound_returns404Json() throws Exception {
+        String body = """
+                {
+                  "reason": "off_topic"
+                }
+                """;
+        mockMvc.perform(patch("/api/events/" + EVENT_ID_NOT_FOUND + "/flag")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer moderator")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.message").value("Event not found."));
+    }
+
+    @Test
+    void patchFlag_softDeleted_returns400Json() throws Exception {
+        String body = """
+                {
+                  "reason": "off_topic"
+                }
+                """;
+        mockMvc.perform(patch("/api/events/" + EVENT_ID_SOFT_DELETED + "/flag")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer moderator")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .accept(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.message").value("Cannot flag a soft-deleted event."));
     }
 }
