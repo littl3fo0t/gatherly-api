@@ -5,10 +5,12 @@ import com.gatherly.gatherly_api.dto.EventListResponse;
 import com.gatherly.gatherly_api.dto.EventResponse;
 import com.gatherly.gatherly_api.dto.UpdateEventRequest;
 import com.gatherly.gatherly_api.dto.OrganizerEventListResponse;
+import com.gatherly.gatherly_api.dto.OrganizerEventItemResponse;
 import com.gatherly.gatherly_api.model.AdmissionType;
 import com.gatherly.gatherly_api.model.Category;
 import com.gatherly.gatherly_api.model.Event;
 import com.gatherly.gatherly_api.model.EventCategory;
+import com.gatherly.gatherly_api.model.FlagReason;
 import com.gatherly.gatherly_api.model.EventStatus;
 import com.gatherly.gatherly_api.model.EventType;
 import com.gatherly.gatherly_api.model.Profile;
@@ -62,6 +64,7 @@ import static org.springframework.http.HttpStatus.NOT_FOUND;
 class EventServiceTest {
 
     private static final UUID ORGANIZER_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    private static final UUID MODERATOR_ID = UUID.fromString("00000000-0000-0000-0000-0000000000dd");
     private static final UUID CATEGORY_ID = UUID.fromString("00000000-0000-0000-0000-0000000000aa");
     private static final UUID SAVED_EVENT_ID = UUID.fromString("00000000-0000-0000-0000-0000000000bb");
 
@@ -757,6 +760,144 @@ class EventServiceTest {
         ArgumentCaptor<Event> captor = ArgumentCaptor.forClass(Event.class);
         verify(eventRepository).save(captor.capture());
         assertEquals(EventStatus.archived, captor.getValue().getStatus());
+    }
+
+    @Test
+    void flagEvent_whenActorRoleNotModeratorOrAdmin_throws403() {
+        ResponseStatusException ex = assertThrows(
+                ResponseStatusException.class,
+                () -> eventService.flagEvent(ORGANIZER_ID, Role.user, SAVED_EVENT_ID, "off_topic")
+        );
+        assertEquals(FORBIDDEN, ex.getStatusCode());
+    }
+
+    @Test
+    void flagEvent_whenEventMissing_throws404() {
+        when(eventRepository.findById(SAVED_EVENT_ID)).thenReturn(Optional.empty());
+
+        ResponseStatusException ex = assertThrows(
+                ResponseStatusException.class,
+                () -> eventService.flagEvent(MODERATOR_ID, Role.moderator, SAVED_EVENT_ID, "off_topic")
+        );
+
+        assertEquals(NOT_FOUND, ex.getStatusCode());
+        assertEquals("Event not found.", ex.getReason());
+    }
+
+    @Test
+    void flagEvent_whenSoftDeleted_throws400() {
+        Event event = persistedEventWithOrganizer(
+                persistedEvent(eventDraft("Mine", 1, 50), SAVED_EVENT_ID),
+                organizer
+        );
+        event.setStatus(EventStatus.soft_deleted);
+        event.setDeletedAt(OffsetDateTime.now(ZoneOffset.UTC));
+
+        when(eventRepository.findById(SAVED_EVENT_ID)).thenReturn(Optional.of(event));
+
+        ResponseStatusException ex = assertThrows(
+                ResponseStatusException.class,
+                () -> eventService.flagEvent(MODERATOR_ID, Role.moderator, SAVED_EVENT_ID, "off_topic")
+        );
+
+        assertEquals(BAD_REQUEST, ex.getStatusCode());
+        assertEquals("Cannot flag a soft-deleted event.", ex.getReason());
+    }
+
+    @Test
+    void flagEvent_whenAlreadyFlagged_throws409() {
+        Event event = persistedEventWithOrganizer(
+                persistedEvent(eventDraft("Mine", 1, 50), SAVED_EVENT_ID),
+                organizer
+        );
+        event.setStatus(EventStatus.flagged);
+
+        when(eventRepository.findById(SAVED_EVENT_ID)).thenReturn(Optional.of(event));
+
+        ResponseStatusException ex = assertThrows(
+                ResponseStatusException.class,
+                () -> eventService.flagEvent(MODERATOR_ID, Role.moderator, SAVED_EVENT_ID, "off_topic")
+        );
+
+        assertEquals(CONFLICT, ex.getStatusCode());
+        assertEquals("Event is already flagged.", ex.getReason());
+    }
+
+    @Test
+    void flagEvent_whenReasonMissing_throws400() {
+        Event event = persistedEventWithOrganizer(
+                persistedEvent(eventDraft("Mine", 1, 50), SAVED_EVENT_ID),
+                organizer
+        );
+        when(eventRepository.findById(SAVED_EVENT_ID)).thenReturn(Optional.of(event));
+
+        ResponseStatusException ex = assertThrows(
+                ResponseStatusException.class,
+                () -> eventService.flagEvent(MODERATOR_ID, Role.moderator, SAVED_EVENT_ID, null)
+        );
+
+        assertEquals(BAD_REQUEST, ex.getStatusCode());
+        assertEquals("Missing or invalid flag reason.", ex.getReason());
+    }
+
+    @Test
+    void flagEvent_whenReasonInvalid_throws400() {
+        Event event = persistedEventWithOrganizer(
+                persistedEvent(eventDraft("Mine", 1, 50), SAVED_EVENT_ID),
+                organizer
+        );
+        when(eventRepository.findById(SAVED_EVENT_ID)).thenReturn(Optional.of(event));
+
+        ResponseStatusException ex = assertThrows(
+                ResponseStatusException.class,
+                () -> eventService.flagEvent(MODERATOR_ID, Role.moderator, SAVED_EVENT_ID, "not_a_reason")
+        );
+
+        assertEquals(BAD_REQUEST, ex.getStatusCode());
+        assertEquals("Missing or invalid flag reason.", ex.getReason());
+    }
+
+    @Test
+    void flagEvent_happyPath_setsFieldsAndReturnsResponse() {
+        Profile moderator = Profile.builder()
+                .id(MODERATOR_ID)
+                .fullName("Mod")
+                .email("mod@example.com")
+                .role(Role.moderator)
+                .avatarUrl(null)
+                .addressLine1(null)
+                .addressLine2(null)
+                .city(null)
+                .province(null)
+                .postalCode(null)
+                .createdAt(OffsetDateTime.parse("2026-01-01T00:00:00Z"))
+                .updatedAt(OffsetDateTime.parse("2026-01-01T00:00:00Z"))
+                .build();
+
+        Event event = persistedEventWithOrganizer(
+                persistedEvent(eventDraft("Mine", 1, 50), SAVED_EVENT_ID),
+                organizer
+        );
+
+        when(eventRepository.findById(SAVED_EVENT_ID)).thenReturn(Optional.of(event));
+        when(profileRepository.findById(MODERATOR_ID)).thenReturn(Optional.of(moderator));
+        when(eventCategoryRepository.findByEvent_Id(SAVED_EVENT_ID)).thenReturn(List.of());
+
+        when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        doNothing().when(entityManager).refresh(any(Event.class));
+
+        OrganizerEventItemResponse response = eventService.flagEvent(MODERATOR_ID, Role.moderator, SAVED_EVENT_ID, "off_topic");
+
+        assertEquals("flagged", response.status());
+        assertEquals("off_topic", response.flagReason());
+        assertNotNull(response.flaggedAt());
+        assertNotNull(response.flaggedBy());
+        assertEquals(MODERATOR_ID, response.flaggedBy().id());
+        assertEquals(ORGANIZER_ID, response.organizer().id());
+
+        assertEquals(EventStatus.flagged, event.getStatus());
+        assertEquals(FlagReason.off_topic, event.getFlagReason());
+        assertEquals(MODERATOR_ID, event.getFlaggedBy().getId());
     }
 
     private static CreateEventRequest validInPersonRequest(List<UUID> categoryIds) {
