@@ -6,8 +6,10 @@ import com.gatherly.gatherly_api.model.EventStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import jakarta.persistence.LockModeType;
 
 import java.time.OffsetDateTime;
 import java.util.Optional;
@@ -40,6 +42,16 @@ public interface EventRepository extends JpaRepository<Event, UUID> {
      * Finds one event by id only when it is in the requested status.
      */
     Optional<Event> findByIdAndStatus(UUID id, EventStatus status);
+
+    /**
+     * Loads an event row while taking a write lock.
+     * <p>
+     * This is used for capacity-sensitive operations (RSVP create/cancel) so two requests
+     * can't both read the same "last available seat" and overbook the event.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT e FROM Event e WHERE e.id = :id")
+    Optional<Event> findByIdForUpdate(@Param("id") UUID id);
 
     /**
      * Organizer dashboard without status filter. Split from the filtered variant so Postgres never sees a
