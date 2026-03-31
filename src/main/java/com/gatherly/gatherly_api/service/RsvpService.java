@@ -4,6 +4,7 @@ import com.gatherly.gatherly_api.dto.MyRsvpsResponse;
 import com.gatherly.gatherly_api.dto.PageResponse;
 import com.gatherly.gatherly_api.dto.RsvpResponse;
 import com.gatherly.gatherly_api.dto.RsvpWithEventSummary;
+import com.gatherly.gatherly_api.dto.RsvpWithEventSummaryRow;
 import com.gatherly.gatherly_api.model.Event;
 import com.gatherly.gatherly_api.model.EventStatus;
 import com.gatherly.gatherly_api.model.Profile;
@@ -151,12 +152,15 @@ public class RsvpService {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         RsvpStatus status = parseOptionalStatusFilter(statusFilter);
 
-        org.springframework.data.domain.Page<RsvpWithEventSummary> upcomingPage = status == null
+        org.springframework.data.domain.Page<RsvpWithEventSummaryRow> upcomingRows = status == null
                 ? rsvpRepository.findMyUpcomingAll(userId, now, pageable)
                 : rsvpRepository.findMyUpcomingFiltered(userId, status, now, pageable);
-        org.springframework.data.domain.Page<RsvpWithEventSummary> pastPage = status == null
+        org.springframework.data.domain.Page<RsvpWithEventSummaryRow> pastRows = status == null
                 ? rsvpRepository.findMyPastAll(userId, now, pageable)
                 : rsvpRepository.findMyPastFiltered(userId, status, now, pageable);
+
+        org.springframework.data.domain.Page<RsvpWithEventSummary> upcomingPage = upcomingRows.map(RsvpWithEventSummary::fromRow);
+        org.springframework.data.domain.Page<RsvpWithEventSummary> pastPage = pastRows.map(RsvpWithEventSummary::fromRow);
 
         PageResponse<RsvpWithEventSummary> upcoming = PageResponse.from(upcomingPage);
         PageResponse<RsvpWithEventSummary> past = PageResponse.from(pastPage);

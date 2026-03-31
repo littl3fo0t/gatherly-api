@@ -939,6 +939,16 @@ class EventControllerTest {
     }
 
     @Test
+    void postRsvp_admissionsClosed_returns400Json() throws Exception {
+        mockMvc.perform(post("/api/events/" + EVENT_ID_ADMISSIONS_CLOSED + "/rsvp")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer user")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.message").value("Event start time has already passed — admissions closed."));
+    }
+
+    @Test
     void patchCancelRsvp_withValidToken_returns200() throws Exception {
         mockMvc.perform(patch("/api/events/" + EVENT_ID + "/rsvp/cancel")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer user")
@@ -946,6 +956,16 @@ class EventControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("cancelled"))
                 .andExpect(jsonPath("$.updatedAt").value("2026-03-31T10:05:00Z"));
+    }
+
+    @Test
+    void patchCancelRsvp_admissionsClosed_returns400Json() throws Exception {
+        mockMvc.perform(patch("/api/events/" + EVENT_ID_ADMISSIONS_CLOSED + "/rsvp/cancel")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer user")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.message").value("Event start time has already passed — admissions closed."));
     }
 
     @Test

@@ -286,7 +286,7 @@ public class EventController {
                                     schema = @Schema(implementation = RsvpResponse.class)
                             )
                     ),
-                    @ApiResponse(responseCode = "400", description = "Event start time has already passed."),
+                    @ApiResponse(responseCode = "400", description = "Event start time has already passed — admissions closed."),
                     @ApiResponse(responseCode = "401", description = "Missing or invalid token."),
                     @ApiResponse(responseCode = "404", description = "No active RSVP found for this user and event.")
             }

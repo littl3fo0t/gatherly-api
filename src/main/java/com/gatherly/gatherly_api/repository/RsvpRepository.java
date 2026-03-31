@@ -1,6 +1,6 @@
 package com.gatherly.gatherly_api.repository;
 
-import com.gatherly.gatherly_api.dto.RsvpWithEventSummary;
+import com.gatherly.gatherly_api.dto.RsvpWithEventSummaryRow;
 import com.gatherly.gatherly_api.model.Rsvp;
 import com.gatherly.gatherly_api.model.RsvpStatus;
 import org.springframework.data.domain.Page;
@@ -27,7 +27,7 @@ public interface RsvpRepository extends JpaRepository<Rsvp, UUID> {
      * (no fetch-join + in-memory paging surprises).
      */
     @Query(value = """
-            SELECT new com.gatherly.gatherly_api.dto.RsvpWithEventSummary(
+            SELECT new com.gatherly.gatherly_api.dto.RsvpWithEventSummaryRow(
               r.id,
               r.status,
               r.createdAt,
@@ -58,7 +58,7 @@ public interface RsvpRepository extends JpaRepository<Rsvp, UUID> {
               AND e.startTime > :now
             """
     )
-    Page<RsvpWithEventSummary> findMyUpcomingAll(
+    Page<RsvpWithEventSummaryRow> findMyUpcomingAll(
             @Param("userId") UUID userId,
             @Param("now") OffsetDateTime now,
             Pageable pageable
@@ -68,7 +68,7 @@ public interface RsvpRepository extends JpaRepository<Rsvp, UUID> {
      * Upcoming RSVPs for one user, restricted to a single status.
      */
     @Query(value = """
-            SELECT new com.gatherly.gatherly_api.dto.RsvpWithEventSummary(
+            SELECT new com.gatherly.gatherly_api.dto.RsvpWithEventSummaryRow(
               r.id,
               r.status,
               r.createdAt,
@@ -101,7 +101,7 @@ public interface RsvpRepository extends JpaRepository<Rsvp, UUID> {
               AND e.startTime > :now
             """
     )
-    Page<RsvpWithEventSummary> findMyUpcomingFiltered(
+    Page<RsvpWithEventSummaryRow> findMyUpcomingFiltered(
             @Param("userId") UUID userId,
             @Param("status") RsvpStatus status,
             @Param("now") OffsetDateTime now,
@@ -112,7 +112,7 @@ public interface RsvpRepository extends JpaRepository<Rsvp, UUID> {
      * Past RSVPs for one user, without a status filter.
      */
     @Query(value = """
-            SELECT new com.gatherly.gatherly_api.dto.RsvpWithEventSummary(
+            SELECT new com.gatherly.gatherly_api.dto.RsvpWithEventSummaryRow(
               r.id,
               r.status,
               r.createdAt,
@@ -143,7 +143,7 @@ public interface RsvpRepository extends JpaRepository<Rsvp, UUID> {
               AND e.startTime <= :now
             """
     )
-    Page<RsvpWithEventSummary> findMyPastAll(
+    Page<RsvpWithEventSummaryRow> findMyPastAll(
             @Param("userId") UUID userId,
             @Param("now") OffsetDateTime now,
             Pageable pageable
@@ -153,7 +153,7 @@ public interface RsvpRepository extends JpaRepository<Rsvp, UUID> {
      * Past RSVPs for one user, restricted to a single status.
      */
     @Query(value = """
-            SELECT new com.gatherly.gatherly_api.dto.RsvpWithEventSummary(
+            SELECT new com.gatherly.gatherly_api.dto.RsvpWithEventSummaryRow(
               r.id,
               r.status,
               r.createdAt,
@@ -186,7 +186,7 @@ public interface RsvpRepository extends JpaRepository<Rsvp, UUID> {
               AND e.startTime <= :now
             """
     )
-    Page<RsvpWithEventSummary> findMyPastFiltered(
+    Page<RsvpWithEventSummaryRow> findMyPastFiltered(
             @Param("userId") UUID userId,
             @Param("status") RsvpStatus status,
             @Param("now") OffsetDateTime now,

@@ -5,10 +5,6 @@ import com.gatherly.gatherly_api.dto.MyRsvpsResponse;
 import com.gatherly.gatherly_api.dto.PageResponse;
 import com.gatherly.gatherly_api.dto.RsvpWithEventSummary;
 import com.gatherly.gatherly_api.exception.GlobalExceptionHandler;
-import com.gatherly.gatherly_api.model.AdmissionType;
-import com.gatherly.gatherly_api.model.EventType;
-import com.gatherly.gatherly_api.model.Province;
-import com.gatherly.gatherly_api.model.RsvpStatus;
 import com.gatherly.gatherly_api.service.RsvpService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,11 +13,13 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -58,33 +56,37 @@ class RsvpControllerTest {
                     LAST_PAGE.set(page);
                     LAST_SIZE.set(size);
 
+                    if ("not_a_status".equals(statusFilter)) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid status filter.");
+                    }
+
                     RsvpWithEventSummary upcomingItem = new RsvpWithEventSummary(
                             UUID.fromString("00000000-0000-0000-0000-0000000000b1"),
-                            RsvpStatus.confirmed,
+                            "confirmed",
                             OffsetDateTime.parse("2026-03-30T10:00:00Z"),
                             OffsetDateTime.parse("2026-03-30T10:00:00Z"),
                             UUID.fromString("00000000-0000-0000-0000-0000000000c1"),
                             "Upcoming Event",
-                            EventType.in_person,
-                            AdmissionType.free,
+                            "in_person",
+                            "free",
                             null,
                             OffsetDateTime.parse("2026-04-10T18:00:00Z"),
                             OffsetDateTime.parse("2026-04-10T21:00:00Z"),
                             "America/Toronto",
                             "Toronto",
-                            Province.ON,
+                            "ON",
                             null
                     );
 
                     RsvpWithEventSummary pastItem = new RsvpWithEventSummary(
                             UUID.fromString("00000000-0000-0000-0000-0000000000b2"),
-                            RsvpStatus.cancelled,
+                            "cancelled",
                             OffsetDateTime.parse("2026-03-01T10:00:00Z"),
                             OffsetDateTime.parse("2026-03-02T10:00:00Z"),
                             UUID.fromString("00000000-0000-0000-0000-0000000000c2"),
                             "Past Event",
-                            EventType.virtual,
-                            AdmissionType.paid,
+                            "virtual",
+                            "paid",
                             java.math.BigDecimal.valueOf(10.00),
                             OffsetDateTime.parse("2026-03-05T18:00:00Z"),
                             OffsetDateTime.parse("2026-03-05T21:00:00Z"),
@@ -141,6 +143,16 @@ class RsvpControllerTest {
                 .andExpect(jsonPath("$.past.content[0].eventTitle").value("Past Event"))
                 .andExpect(jsonPath("$.upcoming.content[0].rsvpStatus").value("confirmed"))
                 .andExpect(jsonPath("$.past.content[0].rsvpStatus").value("cancelled"));
+    }
+
+    @Test
+    void getMyRsvps_invalidStatus_returns400Json() throws Exception {
+        mockMvc.perform(get("/api/rsvps/my?status=not_a_status")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer user")
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.message").value("Invalid status filter."));
     }
 
     @Test
