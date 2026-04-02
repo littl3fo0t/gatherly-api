@@ -97,6 +97,8 @@ public class RsvpService {
         Rsvp saved = rsvpRepository.save(rsvp);
         // created_at / updated_at are set by Postgres defaults + triggers, not by the application.
         // Refresh so the API response includes those DB-managed values.
+        // NOTE: refresh requires the row to exist in the DB, so we must flush before refreshing.
+        entityManager.flush();
         entityManager.refresh(saved);
         return RsvpResponse.from(saved);
     }
@@ -134,6 +136,7 @@ public class RsvpService {
         rsvp.setStatus(RsvpStatus.cancelled);
         Rsvp saved = rsvpRepository.save(rsvp);
         // updated_at is DB-managed; refresh so the response shows the persisted timestamp.
+        entityManager.flush();
         entityManager.refresh(saved);
         return RsvpResponse.from(saved);
     }
