@@ -1,5 +1,7 @@
 package com.gatherly.gatherly_api.security;
 
+import com.gatherly.gatherly_api.config.CorsConfig;
+import com.gatherly.gatherly_api.config.SecurityConfig;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -21,7 +23,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(ProtectedHelloController.class)
-@Import(com.gatherly.gatherly_api.config.SecurityConfig.class)
+@Import({SecurityConfig.class, CorsConfig.class})
 class SecurityErrorResponsesTest {
 
     @Autowired

@@ -1,5 +1,6 @@
 package com.gatherly.gatherly_api.controller;
 
+import com.gatherly.gatherly_api.config.CorsConfig;
 import com.gatherly.gatherly_api.config.SecurityConfig;
 import com.gatherly.gatherly_api.model.Category;
 import com.gatherly.gatherly_api.service.CategoryService;
@@ -9,6 +10,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Bean;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
@@ -23,12 +25,14 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(CategoryController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, CorsConfig.class})
 @Execution(ExecutionMode.SAME_THREAD)
 class CategoryControllerTest {
 
@@ -90,6 +94,15 @@ class CategoryControllerTest {
                         .build();
             };
         }
+    }
+
+    @Test
+    void optionsApiCategories_preflight_includesAllowOriginForLocalFrontend() throws Exception {
+        mockMvc.perform(options("/api/categories")
+                        .header(HttpHeaders.ORIGIN, "http://localhost:3000")
+                        .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "GET"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "http://localhost:3000"));
     }
 
     @Test

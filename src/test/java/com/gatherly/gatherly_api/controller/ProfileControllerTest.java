@@ -1,5 +1,6 @@
 package com.gatherly.gatherly_api.controller;
 
+import com.gatherly.gatherly_api.config.CorsConfig;
 import com.gatherly.gatherly_api.config.SecurityConfig;
 import com.gatherly.gatherly_api.dto.UpdateMyProfileRequest;
 import com.gatherly.gatherly_api.model.Profile;
@@ -32,7 +33,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(ProfileController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, CorsConfig.class})
 class ProfileControllerTest {
 
     private static final UUID TEST_USER_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
