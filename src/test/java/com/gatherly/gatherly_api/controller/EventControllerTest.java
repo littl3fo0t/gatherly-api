@@ -1,5 +1,6 @@
 package com.gatherly.gatherly_api.controller;
 
+import com.gatherly.gatherly_api.config.CorsConfig;
 import com.gatherly.gatherly_api.config.SecurityConfig;
 import com.gatherly.gatherly_api.dto.CreateEventRequest;
 import com.gatherly.gatherly_api.dto.EventAddressResponse;
@@ -46,7 +47,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(EventController.class)
-@Import({SecurityConfig.class, GlobalExceptionHandler.class})
+@Import({SecurityConfig.class, CorsConfig.class, GlobalExceptionHandler.class})
 class EventControllerTest {
 
     private static final UUID USER_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
