@@ -32,5 +32,6 @@ build/
 ### VS Code ###
 .vscode/
 
-# Local application configuration (real secrets, not committed)
-src/main/resources/application.properties
+# Local overrides (secrets); committed application.properties is safe to share
+application-local.properties
+src/main/resources/application-local.properties

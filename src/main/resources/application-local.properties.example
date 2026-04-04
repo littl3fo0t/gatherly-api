@@ -1,0 +1,13 @@
+# Copy this file to application-local.properties in this directory (same folder).
+# application-local.properties is gitignored — do not commit it.
+#
+#   copy application-local.properties.example application-local.properties   (Windows)
+#   cp application-local.properties.example application-local.properties       (Unix)
+#
+# Then replace placeholders with your Supabase pooler URL, credentials, and issuer.
+
+spring.datasource.url=jdbc:postgresql://YOUR_POOLER_HOST:6543/postgres?prepareThreshold=0
+spring.datasource.username=postgres.YOUR_PROJECT_REF
+spring.datasource.password=YOUR_DB_PASSWORD
+
+spring.security.oauth2.resourceserver.jwt.issuer-uri=https://YOUR_PROJECT_REF.supabase.co/auth/v1
