@@ -1,0 +1,3 @@
+# Pin JDK for Nixpacks (matches pom.xml java.version)
+[variables]
+NIXPACKS_JDK_VERSION = "21"
