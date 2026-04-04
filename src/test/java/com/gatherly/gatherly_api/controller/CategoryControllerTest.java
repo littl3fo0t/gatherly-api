@@ -10,8 +10,11 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.MediaType;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Collections;
 import java.util.List;
@@ -72,6 +75,19 @@ class CategoryControllerTest {
                 public List<Category> getAllCategories() {
                     return CATEGORIES.get();
                 }
+            };
+        }
+
+        @Bean
+        JwtDecoder jwtDecoder() {
+            return tokenValue -> {
+                Instant now = Instant.now();
+                return Jwt.withTokenValue(tokenValue)
+                        .header("alg", "RS256")
+                        .subject("test-user")
+                        .issuedAt(now)
+                        .expiresAt(now.plusSeconds(3600))
+                        .build();
             };
         }
     }
