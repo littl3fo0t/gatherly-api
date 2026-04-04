@@ -27,7 +27,8 @@
 		<url/>
 	</scm>
 	<properties>
-		<java.version>25</java.version>
+		<!-- 21 LTS: cloud builders (e.g. Railway/Nixpacks) rarely ship JDK 25 yet -->
+		<java.version>21</java.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -110,6 +111,13 @@
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
+
+	<!-- Railway/Nixpacks runs: mvn ... -Pproduction — define profile so activation succeeds -->
+	<profiles>
+		<profile>
+			<id>production</id>
+		</profile>
+	</profiles>
 
 	<build>
 		<plugins>
