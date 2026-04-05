@@ -273,7 +273,15 @@ Returns the full list of available event categories.
 #### `POST /events`
 Creates a new event. The authenticated user becomes the organizer.
 
-**Request body:**
+**Request body:** Shape depends on `eventType`:
+
+- **`virtual`:** `meetingLink` is required. Address fields may be omitted or null. Swagger UI lists named examples (**Virtual**, **InPerson**, **Hybrid**).
+- **`in_person`:** `addressLine1`, `city`, `province`, and `postalCode` are required. `meetingLink` may be omitted or null.
+- **`hybrid`:** Both `meetingLink` and the same address fields as in-person are required.
+
+**URL fields:** When `meetingLink` or `coverImageUrl` is non-empty, it must be a valid **`http` or `https` URL with a host** (otherwise the API returns `400` with a message like `meetingLink must be a valid http or https URL.`).
+
+**Example — in-person (free):**
 ```json
 {
   "title": "Spring Meetup 2026",
@@ -290,9 +298,32 @@ Creates a new event. The authenticated user becomes the organizer.
   "postalCode": "M5V 1A1",
   "meetingLink": null,
   "admissionFee": null,
-  "coverImageUrl": "https://res.cloudinary.com/...",
+  "coverImageUrl": "https://cdn.example.com/events/banner.jpg",
   "maxCapacity": 50,
   "categoryIds": ["uuid", "uuid"]
+}
+```
+
+**Example — virtual (free):**
+```json
+{
+  "title": "Online AMA",
+  "description": "<p>Join from anywhere</p>",
+  "eventType": "virtual",
+  "admissionType": "free",
+  "startTime": "2026-04-02T18:00:00Z",
+  "endTime": "2026-04-02T19:30:00Z",
+  "timezone": "America/Toronto",
+  "addressLine1": null,
+  "addressLine2": null,
+  "city": null,
+  "province": null,
+  "postalCode": null,
+  "meetingLink": "https://meet.example.com/room/abc",
+  "admissionFee": null,
+  "coverImageUrl": null,
+  "maxCapacity": 100,
+  "categoryIds": []
 }
 ```
 
@@ -301,7 +332,7 @@ Creates a new event. The authenticated user becomes the organizer.
 | Status | Description |
 |---|---|
 | `201 Created` | Event created successfully. Returns the created event. |
-| `400 Bad Request` | Validation failed (e.g. missing required fields, end time before start time, more than 3 categories, missing meeting link for virtual event, `admissionFee` provided for a free event, `admissionFee` missing or zero for a paid event). |
+| `400 Bad Request` | Validation failed (e.g. missing required fields, end time before start time, more than 3 categories, missing meeting link for virtual or hybrid, missing address for in-person or hybrid, invalid or non-http(s) `meetingLink` / `coverImageUrl`, `admissionFee` provided for a free event, `admissionFee` missing or zero for a paid event). |
 | `401 Unauthorized` | Missing or invalid token. |
 
 ---
@@ -315,14 +346,14 @@ Updates an existing event. Only the organizer can edit their own event. `eventTy
 |---|---|---|
 | `id` | `UUID` | The event ID. |
 
-**Request body:** Same shape as `POST /events` excluding `eventType`, `admissionType` and `admissionFee`.
+**Request body:** Same shape as `POST /events` excluding `eventType`, `admissionType` and `admissionFee`. Location and link requirements follow the **stored** event type (virtual / in_person / hybrid), same rules as create. Non-empty `meetingLink` and `coverImageUrl` must be valid **`http` or `https` URLs with a host**. OpenAPI includes named examples (**Virtual**, **InPerson**, **Hybrid**) for this body.
 
 **Responses:**
 
 | Status | Description |
 |---|---|
 | `200 OK` | Event updated successfully. Returns the updated event. |
-| `400 Bad Request` | Validation failed. |
+| `400 Bad Request` | Validation failed (including invalid URLs or missing link/address for the event’s type). |
 | `401 Unauthorized` | Missing or invalid token. |
 | `403 Forbidden` | Authenticated user is not the organizer. |
 | `404 Not Found` | Event not found. |
