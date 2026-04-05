@@ -1,5 +1,7 @@
 package com.gatherly.gatherly_api.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -12,6 +14,12 @@ public record UpdateMyProfileRequest(
         @Size(max = 100, message = "fullName must be at most 100 characters.")
         String fullName,
 
+        @Schema(
+                description = "Optional. Empty or a valid http or https URL.",
+                example = "https://cdn.example.com/avatar.jpg",
+                format = "uri",
+                nullable = true
+        )
         @Pattern(
                 regexp = "^(https?://.*)?$",
                 message = "avatarUrl must be a valid http/https URL."

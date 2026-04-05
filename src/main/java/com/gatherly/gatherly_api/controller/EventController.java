@@ -235,7 +235,93 @@ public class EventController {
     )
     public ResponseEntity<EventResponse> createEvent(
             @AuthenticationPrincipal Jwt jwt,
-            @Valid @RequestBody CreateEventRequest request
+            @Valid
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "Shape depends on eventType: virtual needs meetingLink; in_person needs address fields; "
+                            + "hybrid needs both. See named examples.",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = CreateEventRequest.class),
+                            examples = {
+                                    @ExampleObject(
+                                            name = "Virtual",
+                                            summary = "Free virtual event",
+                                            value = """
+                                                    {
+                                                      "title": "Spring Meetup 2026",
+                                                      "description": "<p>Online meetup</p>",
+                                                      "eventType": "virtual",
+                                                      "admissionType": "free",
+                                                      "startTime": "2026-04-01T18:00:00Z",
+                                                      "endTime": "2026-04-01T21:00:00Z",
+                                                      "timezone": "America/Toronto",
+                                                      "addressLine1": null,
+                                                      "addressLine2": null,
+                                                      "city": null,
+                                                      "province": null,
+                                                      "postalCode": null,
+                                                      "meetingLink": "https://meet.example.com/room/abc",
+                                                      "coverImageUrl": "https://cdn.example.com/events/banner.jpg",
+                                                      "admissionFee": null,
+                                                      "maxCapacity": 50,
+                                                      "categoryIds": []
+                                                    }
+                                                    """
+                                    ),
+                                    @ExampleObject(
+                                            name = "InPerson",
+                                            summary = "Free in-person event",
+                                            value = """
+                                                    {
+                                                      "title": "Neighborhood Walk",
+                                                      "description": "<p>Meet at the corner</p>",
+                                                      "eventType": "in_person",
+                                                      "admissionType": "free",
+                                                      "startTime": "2026-04-10T14:00:00Z",
+                                                      "endTime": "2026-04-10T16:00:00Z",
+                                                      "timezone": "America/Toronto",
+                                                      "addressLine1": "123 Main St",
+                                                      "addressLine2": null,
+                                                      "city": "Toronto",
+                                                      "province": "ON",
+                                                      "postalCode": "M5V 1A1",
+                                                      "meetingLink": null,
+                                                      "coverImageUrl": null,
+                                                      "admissionFee": null,
+                                                      "maxCapacity": 30,
+                                                      "categoryIds": []
+                                                    }
+                                                    """
+                                    ),
+                                    @ExampleObject(
+                                            name = "Hybrid",
+                                            summary = "Free hybrid event",
+                                            value = """
+                                                    {
+                                                      "title": "Workshop + stream",
+                                                      "description": "<p>Attend in person or online</p>",
+                                                      "eventType": "hybrid",
+                                                      "admissionType": "free",
+                                                      "startTime": "2026-05-01T17:00:00Z",
+                                                      "endTime": "2026-05-01T20:00:00Z",
+                                                      "timezone": "America/Toronto",
+                                                      "addressLine1": "456 Queen St W",
+                                                      "addressLine2": "Suite 200",
+                                                      "city": "Toronto",
+                                                      "province": "ON",
+                                                      "postalCode": "M5V 2A8",
+                                                      "meetingLink": "https://meet.example.com/room/hybrid",
+                                                      "coverImageUrl": "https://cdn.example.com/events/workshop.jpg",
+                                                      "admissionFee": null,
+                                                      "maxCapacity": 100,
+                                                      "categoryIds": []
+                                                    }
+                                                    """
+                                    )
+                            }
+                    )
+            )
+            @RequestBody CreateEventRequest request
     ) {
         UUID organizerId = readUserIdFromJwt(jwt);
         EventResponse body = eventService.createEvent(organizerId, request);
@@ -325,7 +411,84 @@ public class EventController {
     public ResponseEntity<EventResponse> updateEvent(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID id,
-            @Valid @RequestBody UpdateEventRequest request
+            @Valid
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "Same mutable fields as create, without eventType, admissionType, or admissionFee. "
+                            + "Rules depend on the event's stored type — see named examples.",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = UpdateEventRequest.class),
+                            examples = {
+                                    @ExampleObject(
+                                            name = "Virtual",
+                                            summary = "Update body when event is virtual",
+                                            value = """
+                                                    {
+                                                      "title": "Spring Meetup 2026",
+                                                      "description": "<p>Updated details</p>",
+                                                      "startTime": "2026-04-01T18:00:00Z",
+                                                      "endTime": "2026-04-01T21:00:00Z",
+                                                      "timezone": "America/Toronto",
+                                                      "addressLine1": null,
+                                                      "addressLine2": null,
+                                                      "city": null,
+                                                      "province": null,
+                                                      "postalCode": null,
+                                                      "meetingLink": "https://meet.example.com/room/abc",
+                                                      "coverImageUrl": "https://cdn.example.com/events/banner.jpg",
+                                                      "maxCapacity": 50,
+                                                      "categoryIds": []
+                                                    }
+                                                    """
+                                    ),
+                                    @ExampleObject(
+                                            name = "InPerson",
+                                            summary = "Update body when event is in_person",
+                                            value = """
+                                                    {
+                                                      "title": "Neighborhood Walk",
+                                                      "description": "<p>Updated route</p>",
+                                                      "startTime": "2026-04-10T14:00:00Z",
+                                                      "endTime": "2026-04-10T16:00:00Z",
+                                                      "timezone": "America/Toronto",
+                                                      "addressLine1": "123 Main St",
+                                                      "addressLine2": null,
+                                                      "city": "Toronto",
+                                                      "province": "ON",
+                                                      "postalCode": "M5V 1A1",
+                                                      "meetingLink": null,
+                                                      "coverImageUrl": null,
+                                                      "maxCapacity": 30,
+                                                      "categoryIds": []
+                                                    }
+                                                    """
+                                    ),
+                                    @ExampleObject(
+                                            name = "Hybrid",
+                                            summary = "Update body when event is hybrid",
+                                            value = """
+                                                    {
+                                                      "title": "Workshop + stream",
+                                                      "description": "<p>Updated schedule</p>",
+                                                      "startTime": "2026-05-01T17:00:00Z",
+                                                      "endTime": "2026-05-01T20:00:00Z",
+                                                      "timezone": "America/Toronto",
+                                                      "addressLine1": "456 Queen St W",
+                                                      "addressLine2": "Suite 200",
+                                                      "city": "Toronto",
+                                                      "province": "ON",
+                                                      "postalCode": "M5V 2A8",
+                                                      "meetingLink": "https://meet.example.com/room/hybrid",
+                                                      "coverImageUrl": "https://cdn.example.com/events/workshop.jpg",
+                                                      "maxCapacity": 100,
+                                                      "categoryIds": []
+                                                    }
+                                                    """
+                                    )
+                            }
+                    )
+            )
+            @RequestBody UpdateEventRequest request
     ) {
         UUID organizerId = readUserIdFromJwt(jwt);
         return ResponseEntity.ok(eventService.updateEvent(organizerId, id, request));
