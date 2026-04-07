@@ -92,4 +92,9 @@ public class Profile {
         this.province = (province == null || province.isBlank()) ? null : Province.valueOf(province);
         this.postalCode = postalCode;
     }
+
+    /** Updates role for admin-only flows (e.g. promote/demote moderator). */
+    public void applyRole(Role newRole) {
+        this.role = newRole;
+    }
 }
