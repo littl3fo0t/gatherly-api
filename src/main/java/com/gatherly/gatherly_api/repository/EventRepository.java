@@ -33,7 +33,8 @@ public interface EventRepository extends JpaRepository<Event, UUID> {
                     WHERE e.status = 'active'
                     ORDER BY
                       CASE
-                        WHEN (COALESCE(e.rsvp_count, 0) * 100) >= (e.max_capacity * 80) THEN 1
+                        -- Use BIGINT math to avoid integer overflow in Postgres.
+                        WHEN (COALESCE(e.rsvp_count, 0)::bigint * 100) >= (e.max_capacity::bigint * 80) THEN 1
                         ELSE 0
                       END DESC,
                       e.start_time ASC,
