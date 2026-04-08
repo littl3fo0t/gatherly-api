@@ -392,10 +392,8 @@ class EventServiceTest {
                 eventDraft("Warm Event", 10, 100),
                 UUID.fromString("00000000-0000-0000-0000-0000000000bc")
         );
-        when(eventRepository.findByStatusOrderForListing(
-                org.mockito.ArgumentMatchers.eq(EventStatus.active),
-                any(PageRequest.class)
-        )).thenReturn(new PageImpl<>(List.of(first, second), PageRequest.of(0, 25), 2));
+        when(eventRepository.findActiveForListing(any(PageRequest.class)))
+                .thenReturn(new PageImpl<>(List.of(first, second), PageRequest.of(0, 25), 2));
 
         Category meetup = Category.builder()
                 .id(CATEGORY_ID)
@@ -426,10 +424,8 @@ class EventServiceTest {
 
     @Test
     void getEvents_emptyPage_returnsValidEnvelope() {
-        when(eventRepository.findByStatusOrderForListing(
-                org.mockito.ArgumentMatchers.eq(EventStatus.active),
-                any(PageRequest.class)
-        )).thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 25), 0));
+        when(eventRepository.findActiveForListing(any(PageRequest.class)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 25), 0));
 
         EventListResponse response = eventService.getEvents(0, 25);
 

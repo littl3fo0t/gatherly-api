@@ -21,22 +21,32 @@ import java.util.UUID;
 public interface EventRepository extends JpaRepository<Event, UUID> {
 
     /**
-     * Returns one page of events in a deterministic order:
-     * hot events first (>=80% full), then earlier start time, then id.
+     * Public listing: active events only, ordered hot-first then by start time.
+     * <p>
+     * Implemented as native SQL so PostgreSQL evaluates the hot sort reliably (the JPQL
+     * variant with {@code CASE} arithmetic has been observed to fail against Postgres in production).
      */
-    @Query("""
-            SELECT e
-            FROM Event e
-            WHERE e.status = :status
-            ORDER BY
-              CASE
-                WHEN (COALESCE(e.rsvpCount, 0) * 100) >= (e.maxCapacity * 80) THEN 1
-                ELSE 0
-              END DESC,
-              e.startTime ASC,
-              e.id ASC
-            """)
-    Page<Event> findByStatusOrderForListing(EventStatus status, Pageable pageable);
+    @Query(
+            value = """
+                    SELECT e.*
+                    FROM events e
+                    WHERE e.status = 'active'
+                    ORDER BY
+                      CASE
+                        WHEN (COALESCE(e.rsvp_count, 0) * 100) >= (e.max_capacity * 80) THEN 1
+                        ELSE 0
+                      END DESC,
+                      e.start_time ASC,
+                      e.id ASC
+                    """,
+            countQuery = """
+                    SELECT count(*)
+                    FROM events e
+                    WHERE e.status = 'active'
+                    """,
+            nativeQuery = true
+    )
+    Page<Event> findActiveForListing(Pageable pageable);
 
     /**
      * Finds one event by id only when it is in the requested status.
