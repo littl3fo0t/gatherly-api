@@ -24,11 +24,29 @@ import com.gatherly.gatherly_api.security.RestAuthenticationEntryPoint;
 public class SecurityConfig {
 
     /**
-     * Public {@code GET /api/events/{uuid}} only — excludes paths like {@code /api/events/my} so JWTs are validated there.
+     * Public event detail: {@code GET /api/events/{uuid}} — excludes paths like {@code /api/events/my}
+     * so JWTs are still validated there.
      */
     private static final Pattern PUBLIC_EVENT_DETAIL_PATH = Pattern.compile(
             "^/api/events/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
     );
+
+    /**
+     * {@code permitAll} reads where the handler does not use authentication; ignore any {@code Authorization}
+     * header so a stale or malformed bearer token cannot trigger JWT processing (401/500) on a public route.
+     */
+    private static boolean isPublicReadIgnoringBearer(String method, String path) {
+        if (!"GET".equalsIgnoreCase(method) || path == null) {
+            return false;
+        }
+        if (PUBLIC_EVENT_DETAIL_PATH.matcher(path).matches()) {
+            return true;
+        }
+        return "/api/events".equals(path)
+                || "/api/events/".equals(path)
+                || "/api/categories".equals(path)
+                || "/api/categories/".equals(path);
+    }
 
     /**
      * Resolves application role from the JWT.
@@ -121,8 +139,9 @@ public class SecurityConfig {
                                 "/swagger-ui.html"
                         ).permitAll()
                         .requestMatchers(HttpMethod.GET, "/", "/index.html").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/categories").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/events").permitAll()
+                        // List routes: with and without trailing slash (must match isPublicReadIgnoringBearer).
+                        .requestMatchers(HttpMethod.GET, "/api/categories", "/api/categories/").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/events", "/api/events/").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/events/my").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/events/*").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
@@ -140,7 +159,8 @@ public class SecurityConfig {
     }
 
     /**
-     * Public event reads should not fail on invalid tokens; controller handles token best-effort.
+     * For public GET routes that do not require auth, omit the bearer token so Spring does not run JWT
+     * validation. Matches {@code getEventById} behavior (optional token decoded in the controller).
      */
     @Bean
     public BearerTokenResolver publicEventReadBearerTokenResolver() {
@@ -148,7 +168,7 @@ public class SecurityConfig {
         return request -> {
             String path = request.getRequestURI();
             String method = request.getMethod();
-            if ("GET".equalsIgnoreCase(method) && path != null && PUBLIC_EVENT_DETAIL_PATH.matcher(path).matches()) {
+            if (isPublicReadIgnoringBearer(method, path)) {
                 return null;
             }
             return delegate.resolve(request);
