@@ -391,7 +391,7 @@ public class EventService {
         int normalizedSize = normalizeSize(size);
         PageRequest pageable = PageRequest.of(normalizedPage, normalizedSize);
 
-        Page<Event> eventsPage = eventRepository.findByStatusOrderForListing(EventStatus.active, pageable);
+        Page<Event> eventsPage = eventRepository.findActiveForListing(pageable);
         List<Event> events = eventsPage.getContent();
         Map<UUID, List<String>> categoriesByEventId = loadCategoryNamesByEventId(events);
 
