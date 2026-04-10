@@ -1,16 +1,17 @@
-# Gatherly — API Endpoints (First Draft)
+# Gatherly — API Endpoints
 
-> **📋 Note:** This document is a first draft and is subject to change during development. Endpoint paths, request bodies, and responses may be adjusted as implementation progresses. All protected endpoints require a valid JWT token in the `Authorization: Bearer <token>` header unless marked as public.
+> This document describes the REST API as implemented in this repository. The **OpenAPI** definition served at `/v3/api-docs` and **Swagger UI** at `/swagger-ui.html` (both permitted without auth) are authoritative for schemas; this guide focuses on behavior and examples.
+
+All paths below are relative to the [base URL](#base-url). Protected endpoints require a valid JWT in the `Authorization: Bearer <token>` header unless the route is explicitly public.
 
 ---
 
 ## Table of Contents
 
 1. [Base URL](#base-url)
-2. [Authentication](#authentication)
+2. [Authentication (Supabase + JWT)](#authentication-supabase--jwt)
 3. [Roles & Access Levels](#roles--access-levels)
 4. [Public Endpoints](#public-endpoints)
-   - [Auth](#auth)
    - [Events](#events-public)
    - [Categories](#categories-public)
 5. [Protected Endpoints](#protected-endpoints)
@@ -18,9 +19,8 @@
    - [RSVPs](#rsvps)
    - [Profiles](#profiles)
 6. [Admin Endpoints](#admin-endpoints)
-   - [Users](#admin--users)
-   - [Events](#admin--events)
-   - [Categories](#admin--categories)
+   - [Implemented](#implemented)
+   - [Deferred (not implemented)](#deferred-not-implemented)
 7. [Error Responses](#error-responses)
 
 ---
@@ -29,20 +29,26 @@
 
 ```
 Local:      http://localhost:8080/api
-Production: https://gatherly-api.onrender.com/api
+Production: https://gatherly-api-production.up.railway.app/api
 ```
+
+Interactive docs: append `/swagger-ui.html` to the same host and port as the API (e.g. `http://localhost:8080/swagger-ui.html` locally).
 
 ---
 
-## Authentication
+## Authentication (Supabase + JWT)
 
-Supabase Auth issues JWT tokens on login and registration. All protected endpoints validate the token via Spring Security before the request reaches the controller. Tokens are passed in the request header as follows:
+This service is an **OAuth2 resource server**. It does **not** expose `POST /auth/register` or `POST /auth/login`; sign-up and sign-in happen in your app via the **Supabase Auth** client (or Supabase dashboard). After the user signs in, send Supabase’s **access token** to this API:
 
 ```
-Authorization: Bearer <token>
+Authorization: Bearer <access_token>
 ```
 
-A missing, expired, or invalid token on a protected endpoint always returns `401 Unauthorized`.
+Spring Security validates the JWT before the request reaches the controller. A missing, expired, or invalid token on a protected endpoint returns **`401 Unauthorized`** with a JSON body (see [Error Responses](#error-responses)).
+
+**Application roles** (`user`, `moderator`, `admin`) are read from the JWT for authorization. Resolution order: `app_metadata.role` (e.g. from a Supabase access-token hook), then `user_metadata.role`, then top-level `role` if it is not `authenticated` or `anon`.
+
+**Profiles:** API responses use the profile shape returned by [`GET /profiles/me`](#get-profilesme). Your registration or post-sign-in flow should ensure a `profiles` row exists for the JWT `sub` (user id) before calling endpoints that require a profile (for example creating an event).
 
 ---
 
@@ -59,94 +65,19 @@ A missing, expired, or invalid token on a protected endpoint always returns `401
 
 ## Public Endpoints
 
-### Auth
-
----
-
-#### `POST /auth/register`
-Creates a new Supabase Auth user and a corresponding `profiles` record.
-
-**Request body:**
-```json
-{
-  "fullName": "Jane Doe",
-  "email": "jane@example.com",
-  "password": "securepassword123"
-}
-```
-
-**Responses:**
-
-| Status | Description |
-|---|---|
-| `201 Created` | Registration successful. Returns the new user profile and JWT token. |
-| `400 Bad Request` | Validation failed (e.g. missing fields, invalid email format, password too short). |
-| `409 Conflict` | An account with this email already exists. |
-
-**Success response body:**
-```json
-{
-  "token": "eyJhbGci...",
-  "user": {
-    "id": "uuid",
-    "fullName": "Jane Doe",
-    "email": "jane@example.com",
-    "role": "user",
-    "createdAt": "2026-03-11T10:00:00Z"
-  }
-}
-```
-
----
-
-#### `POST /auth/login`
-Authenticates an existing user via Supabase Auth and returns a JWT token.
-
-**Request body:**
-```json
-{
-  "email": "jane@example.com",
-  "password": "securepassword123"
-}
-```
-
-**Responses:**
-
-| Status | Description |
-|---|---|
-| `200 OK` | Login successful. Returns user profile and JWT token. |
-| `400 Bad Request` | Missing or malformed request body. |
-| `401 Unauthorized` | Invalid email or password. |
-
-**Success response body:**
-```json
-{
-  "token": "eyJhbGci...",
-  "user": {
-    "id": "uuid",
-    "fullName": "Jane Doe",
-    "email": "jane@example.com",
-    "role": "user",
-    "createdAt": "2026-03-11T10:00:00Z"
-  }
-}
-```
-
----
-
 ### Events (Public)
 
 ---
 
 #### `GET /events`
-Returns a paginated list of all active events, sorted by start time. Hot events (≥ 80% capacity) appear first.
+Returns a paginated list of all **active** events. Sort order: **hot** events first (≥ 80% of `maxCapacity` when capacity is positive), then by **`startTime` ascending**, then by `id` for a stable order.
 
 **Query parameters:**
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `page` | `integer` | ❌ | Page number. Defaults to `0`. |
-| `size` | `integer` | ❌ | Events per page. Defaults to `25`. |
+| `page` | `integer` | ❌ | Zero-based page index. Defaults to `0`. |
+| `size` | `integer` | ❌ | Page size. Defaults to `25`. Maximum `100` per request. |
 
 **Responses:**
 
@@ -232,7 +163,9 @@ Returns full details for a single active event. Organizer name is only included 
 }
 ```
 
-> **Note:** The `organizer` field is only included when a valid JWT is present in the request. Unauthenticated requests receive the full event details excluding the organizer block.
+> **Notes:**
+> - The `organizer` field is only included when a valid JWT is present in the request. Unauthenticated requests receive the same payload **excluding** the `organizer` object.
+> - The public detail response does **not** include `meetingLink`. For virtual or hybrid events, the join link is stored server-side but is only exposed on the organizer dashboard ([`GET /events/my`](#get-eventsmy)) as `meetingLink` on each item.
 
 ---
 
@@ -252,9 +185,24 @@ Returns the full list of available event categories.
 **Success response body:**
 ```json
 [
-  { "id": "uuid", "name": "Meetup", "slug": "meetup" },
-  { "id": "uuid", "name": "Family-Focused", "slug": "family-focused" },
-  { "id": "uuid", "name": "Live Performance", "slug": "live-performance" }
+  {
+    "id": "uuid",
+    "name": "Meetup",
+    "slug": "meetup",
+    "createdAt": "2026-03-01T12:00:00Z"
+  },
+  {
+    "id": "uuid",
+    "name": "Family-Focused",
+    "slug": "family-focused",
+    "createdAt": "2026-03-01T12:00:00Z"
+  },
+  {
+    "id": "uuid",
+    "name": "Live Performance",
+    "slug": "live-performance",
+    "createdAt": "2026-03-01T12:00:00Z"
+  }
 ]
 ```
 
@@ -334,6 +282,7 @@ Creates a new event. The authenticated user becomes the organizer.
 | `201 Created` | Event created successfully. Returns the created event. |
 | `400 Bad Request` | Validation failed (e.g. missing required fields, end time before start time, more than 3 categories, missing meeting link for virtual or hybrid, missing address for in-person or hybrid, invalid or non-http(s) `meetingLink` / `coverImageUrl`, `admissionFee` provided for a free event, `admissionFee` missing or zero for a paid event). |
 | `401 Unauthorized` | Missing or invalid token. |
+| `404 Not Found` | No profile row for the authenticated user (`sub`); create a profile before creating events. |
 
 ---
 
@@ -362,7 +311,7 @@ Updates an existing event. Only the organizer can edit their own event. `eventTy
 ---
 
 #### `DELETE /events/{id}`
-Soft deletes an event. Only the organizer can delete their own event. Sets `deleted_at` to the current timestamp.
+Soft deletes an event. Only the organizer can delete their own event. Sets `deleted_at` to the current timestamp when transitioning from another status to `soft_deleted`.
 
 **Path parameters:**
 
@@ -374,7 +323,7 @@ Soft deletes an event. Only the organizer can delete their own event. Sets `dele
 
 | Status | Description |
 |---|---|
-| `204 No Content` | Event soft deleted successfully. |
+| `204 No Content` | Event soft deleted successfully. **Idempotent:** if the event is already `soft_deleted`, the API still returns `204`. |
 | `401 Unauthorized` | Missing or invalid token. |
 | `403 Forbidden` | Authenticated user is not the organizer. |
 | `404 Not Found` | Event not found. |
@@ -411,10 +360,13 @@ Flags an event. Restricted to `moderator` and `admin` roles only.
 |---|---|---|
 | `id` | `UUID` | The event ID. |
 
-**Request body:**
+**Request body:** `reason` must be one of these lowercase labels (as stored in the database):
+
+`off_topic`, `nsfw`, `spam`, `misleading`, `other`
+
 ```json
 {
-  "reason": "off_topic"
+  "reason": "spam"
 }
 ```
 
@@ -538,9 +490,21 @@ Creates a confirmed RSVP for the authenticated user on the specified event.
 | `201 Created` | RSVP confirmed. Returns the RSVP record. |
 | `400 Bad Request` | Event start time has already passed — admissions closed. |
 | `401 Unauthorized` | Missing or invalid token. |
-| `404 Not Found` | Event not found or not active. |
+| `404 Not Found` | Event not found or not active, or no profile for the authenticated user. |
 | `409 Conflict` | User has already RSVPed for this event. |
 | `422 Unprocessable Entity` | Event is at maximum capacity. |
+
+**Success response body** (`201`):
+```json
+{
+  "id": "uuid",
+  "eventId": "uuid",
+  "userId": "uuid",
+  "status": "confirmed",
+  "createdAt": "2026-04-01T10:00:00Z",
+  "updatedAt": "2026-04-01T10:00:00Z"
+}
+```
 
 ---
 
@@ -557,30 +521,81 @@ Cancels the authenticated user's RSVP for the specified event.
 
 | Status | Description |
 |---|---|
-| `200 OK` | RSVP cancelled successfully. |
-| `400 Bad Request` | Event start time has already passed. |
+| `200 OK` | RSVP cancelled successfully. Returns the updated RSVP row (`status` is `cancelled`). |
+| `400 Bad Request` | Event start time has already passed — admissions closed. |
 | `401 Unauthorized` | Missing or invalid token. |
-| `404 Not Found` | No active RSVP found for this user and event. |
+| `404 Not Found` | Event not found, or no **confirmed** RSVP for this user and event. |
+
+**Success response body** (`200`):
+```json
+{
+  "id": "uuid",
+  "eventId": "uuid",
+  "userId": "uuid",
+  "status": "cancelled",
+  "createdAt": "2026-04-01T10:00:00Z",
+  "updatedAt": "2026-04-01T11:30:00Z"
+}
+```
 
 ---
 
 #### `GET /rsvps/my`
-Returns all RSVPs belonging to the authenticated user, split into upcoming and past.
+Returns the authenticated user’s RSVPs in **two independent pages**: **upcoming** (event `startTime` after now, UTC) and **past** (start time at or before now). Each side uses the same `page` and `size` query parameters.
 
 **Query parameters:**
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `status` | `string` | ❌ | Filter by `confirmed` or `cancelled`. Returns all if omitted. |
-| `page` | `integer` | ❌ | Defaults to `0`. |
-| `size` | `integer` | ❌ | Defaults to `25`. |
+| `status` | `string` | ❌ | Filter RSVPs by status: `confirmed` or `cancelled` (exact enum names). Omit for all statuses. |
+| `page` | `integer` | ❌ | Zero-based page index applied to **both** `upcoming` and `past`. Defaults to `0`. |
+| `size` | `integer` | ❌ | Page size for **both** slices. Defaults to `25`. Maximum `100` per request. |
 
 **Responses:**
 
 | Status | Description |
 |---|---|
-| `200 OK` | Returns paginated list of the user's RSVPs with associated event summaries. |
+| `200 OK` | Returns `upcoming` and `past`, each a paginated `PageResponse` of RSVP + event summary rows. |
+| `400 Bad Request` | Invalid `status` filter (not `confirmed` or `cancelled`). |
 | `401 Unauthorized` | Missing or invalid token. |
+
+**Success response body:**
+```json
+{
+  "upcoming": {
+    "content": [
+      {
+        "rsvpId": "uuid",
+        "rsvpStatus": "confirmed",
+        "rsvpCreatedAt": "2026-04-01T10:00:00Z",
+        "rsvpUpdatedAt": "2026-04-01T10:00:00Z",
+        "eventId": "uuid",
+        "eventTitle": "Spring Meetup 2026",
+        "eventType": "in_person",
+        "admissionType": "free",
+        "admissionFee": null,
+        "startTime": "2026-04-15T18:00:00Z",
+        "endTime": "2026-04-15T21:00:00Z",
+        "timezone": "America/Toronto",
+        "city": "Toronto",
+        "province": "ON",
+        "coverImageUrl": "https://cdn.example.com/banner.jpg"
+      }
+    ],
+    "page": 0,
+    "size": 25,
+    "totalElements": 3,
+    "totalPages": 1
+  },
+  "past": {
+    "content": [],
+    "page": 0,
+    "size": 25,
+    "totalElements": 0,
+    "totalPages": 0
+  }
+}
+```
 
 ---
 
@@ -597,6 +612,24 @@ Returns the authenticated user's full profile.
 |---|---|
 | `200 OK` | Returns the user's profile. |
 | `401 Unauthorized` | Missing or invalid token. |
+
+**Success response body:**
+```json
+{
+  "id": "uuid",
+  "fullName": "Jane Doe",
+  "email": "jane@example.com",
+  "role": "user",
+  "avatarUrl": "https://res.cloudinary.com/...",
+  "addressLine1": "456 Queen St",
+  "addressLine2": null,
+  "city": "Ottawa",
+  "province": "ON",
+  "postalCode": "K1A 0A9",
+  "createdAt": "2026-03-11T10:00:00Z",
+  "updatedAt": "2026-03-11T10:00:00Z"
+}
+```
 
 ---
 
@@ -624,79 +657,28 @@ Updates the authenticated user's profile. Email and role cannot be changed throu
 | `400 Bad Request` | Validation failed. |
 | `401 Unauthorized` | Missing or invalid token. |
 
+**Success response body:** Same shape as [`GET /profiles/me`](#get-profilesme) (all fields reflect persisted values after update).
+
 ---
 
 ## Admin Endpoints
 
-> All endpoints in this section require a valid JWT and the `admin` role. Any non-admin request returns `403 Forbidden`.
+> Routes under `/api/admin/**` require a valid JWT whose application role is **`admin`**. Non-admins receive **`403 Forbidden`** with the standard JSON error body (`message` is the literal `Forbidden` — see [Error Responses](#error-responses)).
 
----
-
-### Admin — Users
-
----
-
-#### `GET /admin/users`
-Returns a paginated list of all registered users.
-
-**Query parameters:**
-
-| Parameter | Type | Required | Description |
-|---|---|---|---|
-| `page` | `integer` | ❌ | Defaults to `0`. |
-| `size` | `integer` | ❌ | Defaults to `25`. |
-| `role` | `string` | ❌ | Filter by `user`, `moderator`, or `admin`. |
-
-**Responses:**
-
-| Status | Description |
-|---|---|
-| `200 OK` | Returns paginated list of all users. |
-| `401 Unauthorized` | Missing or invalid token. |
-| `403 Forbidden` | Authenticated user is not admin. |
-
----
-
-#### `PUT /admin/users/{id}`
-Updates a user's details. Intended for admin corrections — name and email only.
-
-**Path parameters:**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `id` | `UUID` | The user ID. |
-
-**Request body:**
-```json
-{
-  "fullName": "Jane Doe",
-  "email": "jane.updated@example.com"
-}
-```
-
-**Responses:**
-
-| Status | Description |
-|---|---|
-| `200 OK` | User updated successfully. Returns updated profile. |
-| `400 Bad Request` | Validation failed. |
-| `401 Unauthorized` | Missing or invalid token. |
-| `403 Forbidden` | Authenticated user is not admin. |
-| `404 Not Found` | User not found. |
-| `409 Conflict` | Email already in use by another account. |
-
----
+### Implemented
 
 #### `PATCH /admin/users/{id}/role`
-Promotes or demotes a user's role between `user` and `moderator`. Cannot be used to assign or remove the `admin` role.
+
+Promotes or demotes a user between **`user`** and **`moderator`**. Cannot assign, remove, or change the **`admin`** role through this endpoint.
 
 **Path parameters:**
 
 | Parameter | Type | Description |
 |---|---|---|
-| `id` | `UUID` | The user ID. |
+| `id` | `UUID` | Target user’s profile id. |
 
-**Request body:**
+**Request body:** `role` must be the JSON string `user` or `moderator` (lowercase, matching the API enum).
+
 ```json
 {
   "role": "moderator"
@@ -707,152 +689,62 @@ Promotes or demotes a user's role between `user` and `moderator`. Cannot be used
 
 | Status | Description |
 |---|---|
-| `200 OK` | Role updated successfully. Returns updated profile. |
-| `400 Bad Request` | Invalid role value or attempted assignment of `admin` role. |
+| `200 OK` | Role updated. Returns the updated profile (same shape as [`GET /profiles/me`](#get-profilesme)). |
+| `400 Bad Request` | Invalid body, invalid role, or business rule violation (e.g. cannot modify an admin account this way). |
 | `401 Unauthorized` | Missing or invalid token. |
 | `403 Forbidden` | Authenticated user is not admin. |
 | `404 Not Found` | User not found. |
 
----
+**Success response body** (`200`): identical fields to **`GET /profiles/me`**, for example:
 
-### Admin — Events
-
----
-
-#### `GET /admin/events`
-Returns a paginated list of all events regardless of status. Intended for full platform oversight.
-
-**Query parameters:**
-
-| Parameter | Type | Required | Description |
-|---|---|---|---|
-| `status` | `string` | ❌ | Filter by `active`, `flagged`, `archived`, `soft_deleted`. |
-| `page` | `integer` | ❌ | Defaults to `0`. |
-| `size` | `integer` | ❌ | Defaults to `25`. |
-
-**Responses:**
-
-| Status | Description |
-|---|---|
-| `200 OK` | Returns paginated list of all events. |
-| `401 Unauthorized` | Missing or invalid token. |
-| `403 Forbidden` | Authenticated user is not admin. |
-
----
-
-#### `GET /admin/events/{id}/log`
-Returns the full audit log for a specific event.
-
-**Path parameters:**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `id` | `UUID` | The event ID. |
-
-**Responses:**
-
-| Status | Description |
-|---|---|
-| `200 OK` | Returns list of all log entries for the event in descending chronological order. |
-| `401 Unauthorized` | Missing or invalid token. |
-| `403 Forbidden` | Authenticated user is not admin. |
-| `404 Not Found` | Event not found. |
-
----
-
-### Admin — Categories
-
----
-
-#### `POST /admin/categories`
-Creates a new event category.
-
-**Request body:**
 ```json
 {
-  "name": "Fundraiser",
-  "slug": "fundraiser"
+  "id": "uuid",
+  "fullName": "Jane Doe",
+  "email": "jane@example.com",
+  "role": "moderator",
+  "avatarUrl": null,
+  "addressLine1": null,
+  "addressLine2": null,
+  "city": null,
+  "province": null,
+  "postalCode": null,
+  "createdAt": "2026-03-11T10:00:00Z",
+  "updatedAt": "2026-04-09T15:00:00Z"
 }
 ```
 
-**Responses:**
+### Deferred (not implemented)
 
-| Status | Description |
+The following were planned for a later iteration and are **not** exposed by the current API (calling them will **not** hit a Gatherly handler):
+
+| Area | Intended endpoints (roadmap) |
 |---|---|
-| `201 Created` | Category created. Returns the new category. |
-| `400 Bad Request` | Missing or invalid fields. |
-| `401 Unauthorized` | Missing or invalid token. |
-| `403 Forbidden` | Authenticated user is not admin. |
-| `409 Conflict` | A category with this name or slug already exists. |
+| **Users** | `GET /api/admin/users`, `PUT /api/admin/users/{id}` |
+| **Events** | `GET /api/admin/events`, `GET /api/admin/events/{id}/log` |
+| **Categories** | `POST /api/admin/categories`, `PUT /api/admin/categories/{id}`, `DELETE /api/admin/categories/{id}` |
 
----
-
-#### `PUT /admin/categories/{id}`
-Updates an existing category's name or slug.
-
-**Path parameters:**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `id` | `UUID` | The category ID. |
-
-**Request body:**
-```json
-{
-  "name": "Fundraiser Event",
-  "slug": "fundraiser-event"
-}
-```
-
-**Responses:**
-
-| Status | Description |
-|---|---|
-| `200 OK` | Category updated. Returns the updated category. |
-| `400 Bad Request` | Validation failed. |
-| `401 Unauthorized` | Missing or invalid token. |
-| `403 Forbidden` | Authenticated user is not admin. |
-| `404 Not Found` | Category not found. |
-| `409 Conflict` | Name or slug already in use. |
-
----
-
-#### `DELETE /admin/categories/{id}`
-Deletes a category. Should be used with caution — consider the impact on events currently assigned this category.
-
-**Path parameters:**
-
-| Parameter | Type | Description |
-|---|---|---|
-| `id` | `UUID` | The category ID. |
-
-**Responses:**
-
-| Status | Description |
-|---|---|
-| `204 No Content` | Category deleted successfully. |
-| `401 Unauthorized` | Missing or invalid token. |
-| `403 Forbidden` | Authenticated user is not admin. |
-| `404 Not Found` | Category not found. |
+Categories remain **read-only** for clients via public [`GET /categories`](#get-categories).
 
 ---
 
 ## Error Responses
 
-All error responses follow a consistent structure to make client-side handling predictable.
+Most errors use the same JSON envelope (`timestamp`, `status`, `error`, `message`, `path`, optional `errors`). `timestamp` is an ISO-8601 instant in UTC.
 
-**Error response body:**
+**Typical error body** (single message, no field list):
 ```json
 {
   "timestamp": "2026-03-11T10:00:00Z",
   "status": 400,
   "error": "Bad Request",
-  "message": "Validation failed for one or more fields.",
+  "message": "Malformed JSON request body.",
   "path": "/api/events"
 }
 ```
 
-**Validation error response body** (for `400` responses with multiple field errors):
+**Bean validation** (`@Valid` failures) sets `message` to **`Validation failed.`** and includes an `errors` array:
+
 ```json
 {
   "timestamp": "2026-03-11T10:00:00Z",
@@ -867,6 +759,10 @@ All error responses follow a consistent structure to make client-side handling p
 }
 ```
 
+**`401 Unauthorized`** (Spring Security resource server / invalid bearer token): `message` is **`Missing or invalid JWT token.`** When the Spring profile **`development`** is active, the API may add `exception` and `debugMessage` for troubleshooting; those fields are not returned in production.
+
+**`403 Forbidden`** (authenticated but not allowed, e.g. wrong role): `message` is the literal **`Forbidden`**.
+
 **Common HTTP status codes used across the API:**
 
 | Status | Meaning |
@@ -874,10 +770,10 @@ All error responses follow a consistent structure to make client-side handling p
 | `200 OK` | Request succeeded. |
 | `201 Created` | Resource created successfully. |
 | `204 No Content` | Request succeeded with no response body. |
-| `400 Bad Request` | Validation failed or malformed request. |
-| `401 Unauthorized` | Missing or invalid JWT token. |
-| `403 Forbidden` | Valid token but insufficient role/permissions. |
-| `404 Not Found` | Resource not found. |
-| `409 Conflict` | Request conflicts with existing data (e.g. duplicate email, immutable field change). |
-| `422 Unprocessable Entity` | Request is valid but cannot be processed (e.g. event at capacity). |
-| `500 Internal Server Error` | Unexpected server error. |
+| `400 Bad Request` | Validation failed, bad query parameter, or malformed JSON (`message` varies; see above). |
+| `401 Unauthorized` | Missing or invalid JWT (`message`: `Missing or invalid JWT token.`). |
+| `403 Forbidden` | Valid token but insufficient role or ownership (`message`: `Forbidden`). |
+| `404 Not Found` | Resource not found or hidden (e.g. inactive event). |
+| `409 Conflict` | Request conflicts with existing data (e.g. duplicate RSVP). |
+| `422 Unprocessable Entity` | Request understood but cannot be applied (e.g. event at capacity). |
+| `500 Internal Server Error` | Unexpected server error (`message`: `An unexpected error occurred.`). |
