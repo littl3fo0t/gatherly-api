@@ -19,3 +19,4 @@ The API is deployed on **Railway**.
 - Human-oriented overview: [docs/api_endpoints.md](docs/api_endpoints.md)
 - With the app running locally, open **Swagger UI** at `/swagger-ui.html` for interactive API docs.
 
+Author: [Thomas Brun](https://github.com/littl3fo0t)
