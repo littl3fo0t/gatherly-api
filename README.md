@@ -1,39 +1,21 @@
-# Gatherly — A Local Event Board
-A full stack community event platform where users can discover local events, create and manage their own, and RSVP for ones they want to attend.
+# Gatherly API
+
+The **Gatherly API** is the backend for a community event board. In plain terms: people can **browse upcoming events**, **organizers can publish and manage their own listings**, and **attendees can RSVP** so hosts know who is coming. Sign-in is handled with **Supabase**; the API trusts a secure token on each request so only the right people can create events, update profiles, or RSVP under their account. Event listings can include a **cover image link** (your app chooses where that image is hosted).
 
 ## Technologies
 
-### Backend:
- - Java & Spring Boot
- - PostgreSQL
- - Supabase Auth (JWT-based authentication)
- - Cloudinary (image uploads)
- - SpringDoc & Swagger UI (API documentation)
- - JUnit 5 & Mockito (testing)
+- **Java** and **Spring Boot** — web API and business logic
+- **PostgreSQL** — events, profiles, RSVPs, and related data
+- **Supabase Auth** — accounts; the API validates **JWT** tokens
+- **SpringDoc / OpenAPI** and **Swagger UI** — machine-readable spec and a browser UI to try endpoints
+- **JUnit 5** and **Mockito** — automated tests
 
-### Frontend:
- - Next.js
- - Tailwind CSS
- - shadcn/ui
- - TipTap (rich text editing)
+## Deployment
 
-### Deployment:
- - Railway (API & database)
- - Vercel (frontend)
+The API is deployed on **Railway**.
 
-## Basic Workflow (WIP)
-1. User registers/logs in
-   - Supabase Auth issues JWT
-   - User record saved in PostgreSQL
-2. Organizer creates event in ~~Sanity~~ UI
-   - UI makes `POST` request to `Supabase`
-   - ~~Sanity~~ `Supabase` stores content (title, description, tags, images, location, etc...)
-   - ~~Spring Boot syncs or fetches event reference → saved in PostgreSQL~~
-4. General user browses events
-   - Request hits Spring Boot API
-   - Spring Boot fetches content from ~~Sanity + joins with PostgreSQL data~~ `Supabase`
-   - Returns ~~unified~~ event response
-5. General user RSVPs
-   - Request hits protected Spring Boot endpoint (JWT validated)
-   - RSVP record written to PostgreSQL
-   - Event record updated with new RSVP count
+## Documentation
+
+- Human-oriented overview: [docs/api_endpoints.md](docs/api_endpoints.md)
+- With the app running locally, open **Swagger UI** at `/swagger-ui.html` for interactive API docs.
+
